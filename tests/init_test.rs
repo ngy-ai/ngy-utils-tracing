@@ -16,7 +16,7 @@ fn test_full_init_development() {
         env::remove_var("RUST_LOG");
     }
 
-    let result = init(None, Vec::new()).expect("init should succeed");
+    let result = init(None, Vec::new(), None).expect("init should succeed");
 
     assert_eq!(result.mode, AppMode::Development);
     assert!(result.guard.is_none());

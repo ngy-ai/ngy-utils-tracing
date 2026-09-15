@@ -22,9 +22,12 @@ use crate::file_tracing::{
 ///
 /// The returned `WorkerGuard` must stay alive to ensure file logs are fully written.
 /// This function calls `try_init()` and can only be called once per process.
-pub fn test_tracing(crates: Vec<String>) -> anyhow::Result<WorkerGuard> {
+///
+/// `log_prefix` overrides the `LOG_PREFIX` environment variable when `Some`; otherwise the
+/// `LOG_PREFIX` env var (default `app.log`) is used as the file name prefix.
+pub fn test_tracing(crates: Vec<String>, log_prefix: Option<String>) -> anyhow::Result<WorkerGuard> {
     let log_dir = resolve_log_dir();
-    let log_prefix = resolve_log_prefix();
+    let log_prefix = log_prefix.unwrap_or_else(resolve_log_prefix);
 
     // File layer: use build_file_filter to control the level
     let (file_layer, guard) = build_file_layer(&log_dir, &log_prefix)?;

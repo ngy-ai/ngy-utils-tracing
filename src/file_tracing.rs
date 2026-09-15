@@ -63,9 +63,12 @@ where
 ///
 /// The returned `tracing_appender::non_blocking::WorkerGuard` must stay alive,
 /// otherwise logs may be lost. The caller should keep it in the main function until the process exits.
-pub fn file_tracing() -> anyhow::Result<WorkerGuard> {
+///
+/// `log_prefix` overrides the `LOG_PREFIX` environment variable when `Some`; otherwise the
+/// `LOG_PREFIX` env var (default `app.log`) is used as the file name prefix.
+pub fn file_tracing(log_prefix: Option<String>) -> anyhow::Result<WorkerGuard> {
     let log_dir = resolve_log_dir();
-    let log_prefix = resolve_log_prefix();
+    let log_prefix = log_prefix.unwrap_or_else(resolve_log_prefix);
     let (fmt_layer, guard) = build_file_layer(&log_dir, &log_prefix)?;
     let env_filter = build_file_filter("info")?;
 

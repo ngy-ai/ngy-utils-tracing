@@ -31,6 +31,10 @@ pub struct InitResult {
 ///
 /// - `mode_override`: Optional application mode override. An invalid value triggers a warning and
 ///   falls back to Development. If not provided, the mode is read from the `APP_MODE` env var.
+/// - `crates`: List of project crate names that should use the `debug` level in console logging.
+/// - `log_prefix_name`: Optional log file name prefix (without the date suffix). When `Some`, it
+///   overrides the `LOG_PREFIX` environment variable for file logging; otherwise `LOG_PREFIX`
+///   (default `app.log`) is used as the file name prefix.
 ///
 /// # Example
 ///
@@ -38,13 +42,17 @@ pub struct InitResult {
 /// use ngy_utils_tracing::init;
 ///
 /// // Read mode from the environment variable
-/// let result = init(None, Vec::new()).expect("Failed to initialize");
+/// let result = init(None, Vec::new(), None).expect("Failed to initialize");
 ///
-/// // Force a specific mode
-/// let result = init(Some("development"), Vec::new()).expect("Failed to initialize");
+/// // Force a specific mode with a custom log file prefix
+/// let result = init(Some("production"), Vec::new(), Some("myapp.log".to_string())).expect("Failed to initialize");
 /// tracing::info!("Application started in {} mode", result.mode);
 /// ```
-pub fn init(mode_override: Option<&str>, crates: Vec<String>) -> anyhow::Result<InitResult> {
+pub fn init(
+    mode_override: Option<&str>,
+    crates: Vec<String>,
+    log_prefix_name: Option<String>,
+) -> anyhow::Result<InitResult> {
     // Prevent repeated initialization: the global tracing subscriber can only be set once, and
     // CURRENT_MODE is immutable; repeated calls should return a clear error early rather than
     // having CURRENT_MODE.set silently ignored.
@@ -74,7 +82,7 @@ pub fn init(mode_override: Option<&str>, crates: Vec<String>) -> anyhow::Result<
 
     let guard = match mode {
         AppMode::Production => {
-            let g = file_tracing()?;
+            let g = file_tracing(log_prefix_name)?;
             Some(g)
         }
         AppMode::Development => {
@@ -82,7 +90,7 @@ pub fn init(mode_override: Option<&str>, crates: Vec<String>) -> anyhow::Result<
             None
         }
         AppMode::Test => {
-            let g = test_tracing(crates)?;
+            let g = test_tracing(crates, log_prefix_name)?;
             Some(g)
         }
     };
@@ -99,7 +107,7 @@ pub fn init(mode_override: Option<&str>, crates: Vec<String>) -> anyhow::Result<
 /// ```no_run
 /// use ngy_utils_tracing::{init, get_current_mode};
 ///
-/// init(None, Vec::new()).expect("Failed to initialize");
+/// init(None, Vec::new(), None).expect("Failed to initialize");
 ///
 /// if let Some(mode) = get_current_mode() {
 ///     println!("Current mode: {}", mode);
