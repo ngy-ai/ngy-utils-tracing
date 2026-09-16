@@ -46,7 +46,10 @@ impl AppMode {
                     // Note: at this point init() has not yet set up the tracing subscriber
                     // (see the call order in init::init). Using tracing::warn! would be silently
                     // dropped due to no subscriber. Use eprintln! to ensure the warning is visible.
-                    eprintln!("Invalid APP_MODE value '{}', falling back to Production", s);
+                    eprintln!(
+                        "Invalid {} value '{}', falling back to Production",
+                        mode_env_var, s
+                    );
                     Self::Production
                 }
             },
