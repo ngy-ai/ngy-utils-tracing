@@ -97,7 +97,7 @@ Defaults to `Development`. When `APP_MODE` or the override value is invalid, a w
 
 | Variable        | Default       | Purpose                                           |
 | --------------- | ------------- | ------------------------------------------------- |
-| `APP_MODE`      | `development` | Select the log mode.                              |
+| `APP_MODE`      | `production`  | Select the log mode.                              |
 | `RUST_LOG`      | `info`        | Control log level, readable by `build_*_filter`.  |
 | `LOG_DIR`       | `logs`        | File log directory.                               |
 | `LOG_PREFIX`    | `app.log`     | File log filename prefix.                         |
