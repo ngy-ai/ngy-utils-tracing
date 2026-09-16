@@ -72,7 +72,7 @@ fn main() -> anyhow::Result<()> {
 | `Test`          | `test`                        | Console (pretty) + File (JSON)       |
 | `Production`    | `production` / `prod`         | File (JSON, daily rotation)          |
 
-Defaults to `Development`. When `APP_MODE` or the override value is invalid, a warning is printed and it falls back to `Development`.
+Defaults to `Production`. When `APP_MODE` or the override value is invalid, a warning is printed and it falls back to `Production`.
 
 ## Public API
 
