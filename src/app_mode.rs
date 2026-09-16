@@ -20,10 +20,11 @@ pub enum AppMode {
 impl AppMode {
     /// Get the current application mode
     ///
-    /// Resolution order: prefer `override_mode`, then read the `APP_MODE` environment variable,
-    /// falling back to Development when both are missing or invalid.
-    /// When `override_mode` or `APP_MODE` is invalid, a warning is printed and it falls back to Development.
-    pub fn get(override_mode: Option<&str>) -> Self {
+    /// Resolution order: prefer `override_mode`, then read the environment variable named by
+    /// `mode_env_var` (e.g. `APP_MODE`), falling back to Development when both are missing or
+    /// invalid. When `override_mode` or the env var value is invalid, a warning is printed and it
+    /// falls back to Development.
+    pub fn get(override_mode: Option<&str>, mode_env_var: &str) -> Self {
         if let Some(s) = override_mode {
             match Self::from_str(s) {
                 Ok(mode) => return mode,
@@ -37,7 +38,7 @@ impl AppMode {
             }
         }
 
-        match env::var("APP_MODE") {
+        match env::var(mode_env_var) {
             Ok(s) => match Self::from_str(&s) {
                 Ok(mode) => mode,
                 Err(_) => {

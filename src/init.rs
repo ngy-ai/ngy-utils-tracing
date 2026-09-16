@@ -35,6 +35,9 @@ pub struct InitResult {
 /// - `log_prefix_name`: Optional log file name prefix (without the date suffix). When `Some`, it
 ///   overrides the `LOG_PREFIX` environment variable for file logging; otherwise `LOG_PREFIX`
 ///   (default `app.log`) is used as the file name prefix.
+/// - `mode_env_var`: Optional name of the environment variable used to read the application mode.
+///   When `Some`, that variable is read instead of the default `APP_MODE`; when `None`, `APP_MODE`
+///   is used.
 ///
 /// # Example
 ///
@@ -42,16 +45,17 @@ pub struct InitResult {
 /// use ngy_utils_tracing::init;
 ///
 /// // Read mode from the environment variable
-/// let result = init(None, Vec::new(), None).expect("Failed to initialize");
+/// let result = init(None, Vec::new(), None, None).expect("Failed to initialize");
 ///
 /// // Force a specific mode with a custom log file prefix
-/// let result = init(Some("production"), Vec::new(), Some("myapp.log".to_string())).expect("Failed to initialize");
+/// let result = init(Some("production"), Vec::new(), Some("myapp.log".to_string()), None).expect("Failed to initialize");
 /// tracing::info!("Application started in {} mode", result.mode);
 /// ```
 pub fn init(
     mode_override: Option<&str>,
     crates: Vec<String>,
     log_prefix_name: Option<String>,
+    mode_env_var: Option<String>,
 ) -> anyhow::Result<InitResult> {
     // Prevent repeated initialization: the global tracing subscriber can only be set once, and
     // CURRENT_MODE is immutable; repeated calls should return a clear error early rather than
@@ -61,7 +65,7 @@ pub fn init(
     }
 
     // Determine the mode first, used to decide whether to print loading info
-    let mode = AppMode::get(mode_override);
+    let mode = AppMode::get(mode_override, mode_env_var.as_deref().unwrap_or("APP_MODE"));
 
     // Store in the global variable (the duplicate check above guarantees set succeeds here)
     CURRENT_MODE.set(mode).ok();
@@ -107,7 +111,7 @@ pub fn init(
 /// ```no_run
 /// use ngy_utils_tracing::{init, get_current_mode};
 ///
-/// init(None, Vec::new(), None).expect("Failed to initialize");
+/// init(None, Vec::new(), None, None).expect("Failed to initialize");
 ///
 /// if let Some(mode) = get_current_mode() {
 ///     println!("Current mode: {}", mode);

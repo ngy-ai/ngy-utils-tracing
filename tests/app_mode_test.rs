@@ -20,22 +20,22 @@ fn test_app_mode_from_env() {
     unsafe {
         env::set_var("APP_MODE", "production");
     }
-    assert_eq!(AppMode::get(None), AppMode::Production);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Production);
 
     unsafe {
         env::set_var("APP_MODE", "test");
     }
-    assert_eq!(AppMode::get(None), AppMode::Test);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Test);
 
     unsafe {
         env::set_var("APP_MODE", "development");
     }
-    assert_eq!(AppMode::get(None), AppMode::Development);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Development);
 
     unsafe {
         env::remove_var("APP_MODE");
     }
-    assert_eq!(AppMode::get(None), AppMode::Development);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Development);
 }
 
 #[test]
@@ -46,12 +46,12 @@ fn test_app_mode_aliases() {
     unsafe {
         env::set_var("APP_MODE", "dev");
     }
-    assert_eq!(AppMode::get(None), AppMode::Development);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Development);
 
     unsafe {
         env::set_var("APP_MODE", "prod");
     }
-    assert_eq!(AppMode::get(None), AppMode::Production);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Production);
 
     unsafe {
         env::remove_var("APP_MODE");
@@ -66,7 +66,7 @@ fn test_app_mode_invalid_falls_back_to_development() {
     unsafe {
         env::set_var("APP_MODE", "invalid_mode");
     }
-    assert_eq!(AppMode::get(None), AppMode::Development);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Development);
     unsafe {
         env::remove_var("APP_MODE");
     }

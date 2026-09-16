@@ -34,7 +34,7 @@ use ngy_utils_tracing::{init, get_current_mode};
 
 fn main() -> anyhow::Result<()> {
     // Read mode from APP_MODE env var; crates is the list of project crates that need debug level
-    let result = init(None, vec!["my_crate".to_string()], None)?;
+    let result = init(None, vec!["my_crate".to_string()], None, None)?;
 
     println!("started in {} mode", result.mode);
     tracing::info!("Application started");
@@ -67,7 +67,7 @@ Defaults to `Development`. When `APP_MODE` or the override value is invalid, a w
 
 | Function / Type                  | Description                                                  |
 | -------------------------------- | ------------------------------------------------------------ |
-| `init(mode_override, crates, log_prefix_name)` | Unified initialization of dotenv + tracing, selecting config by mode. `log_prefix_name` optionally overrides the file name prefix. Returns `InitResult` (with `guard` and `mode`). |
+| `init(mode_override, crates, log_prefix_name, mode_env_var)` | Unified initialization of dotenv + tracing, selecting config by mode. `log_prefix_name` optionally overrides the file name prefix, and `mode_env_var` optionally overrides the env var used to read the mode (defaults to `APP_MODE`). Returns `InitResult` (with `guard` and `mode`). |
 | `get_current_mode()`             | Get the current application mode (requires `init()` first); returns `None` if not initialized. |
 | `AppMode`                        | Application mode enum, providing `as_str` / `is_development` etc. |
 | `console_tracing(crates)`        | Initialize console logging only (pretty).                    |
