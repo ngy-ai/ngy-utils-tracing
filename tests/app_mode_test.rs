@@ -35,7 +35,7 @@ fn test_app_mode_from_env() {
     unsafe {
         env::remove_var("APP_MODE");
     }
-    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Development);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Production);
 }
 
 #[test]
@@ -59,14 +59,14 @@ fn test_app_mode_aliases() {
 }
 
 #[test]
-fn test_app_mode_invalid_falls_back_to_development() {
+fn test_app_mode_invalid_falls_back_to_production() {
     let _lock = ENV_MUTEX.lock().unwrap();
 
     // SAFETY: Same as above; holding the ENV_MUTEX lock ensures this case exclusively modifies APP_MODE.
     unsafe {
         env::set_var("APP_MODE", "invalid_mode");
     }
-    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Development);
+    assert_eq!(AppMode::get(None, "APP_MODE"), AppMode::Production);
     unsafe {
         env::remove_var("APP_MODE");
     }

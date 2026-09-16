@@ -30,7 +30,7 @@ pub struct InitResult {
 /// # Parameters
 ///
 /// - `mode_override`: Optional application mode override. An invalid value triggers a warning and
-///   falls back to Development. If not provided, the mode is read from the `APP_MODE` env var.
+///   falls back to Production. If not provided, the mode is read from the `APP_MODE` env var.
 /// - `crates`: List of project crate names that should use the `debug` level in console logging.
 /// - `log_prefix_name`: Optional log file name prefix (without the date suffix). When `Some`, it
 ///   overrides the `LOG_PREFIX` environment variable for file logging; otherwise `LOG_PREFIX`

@@ -1,6 +1,6 @@
 //! Application mode definitions: Development, Test, Production
 //!
-//! Controlled via the `APP_MODE` environment variable, defaulting to Development.
+//! Controlled via the `APP_MODE` environment variable, defaulting to Production.
 
 use std::env;
 use std::fmt;
@@ -21,19 +21,19 @@ impl AppMode {
     /// Get the current application mode
     ///
     /// Resolution order: prefer `override_mode`, then read the environment variable named by
-    /// `mode_env_var` (e.g. `APP_MODE`), falling back to Development when both are missing or
+    /// `mode_env_var` (e.g. `APP_MODE`), falling back to Production when both are missing or
     /// invalid. When `override_mode` or the env var value is invalid, a warning is printed and it
-    /// falls back to Development.
+    /// falls back to Production.
     pub fn get(override_mode: Option<String>, mode_env_var: &str) -> Self {
         if let Some(s) = override_mode {
             match Self::from_str(&s) {
                 Ok(mode) => return mode,
                 Err(_) => {
                     eprintln!(
-                        "Invalid override_mode value '{}', falling back to Development",
+                        "Invalid override_mode value '{}', falling back to Production",
                         s
                     );
-                    return Self::Development;
+                    return Self::Production;
                 }
             }
         }
@@ -46,13 +46,13 @@ impl AppMode {
                     // (see the call order in init::init). Using tracing::warn! would be silently
                     // dropped due to no subscriber. Use eprintln! to ensure the warning is visible.
                     eprintln!(
-                        "Invalid APP_MODE value '{}', falling back to Development",
+                        "Invalid APP_MODE value '{}', falling back to Production",
                         s
                     );
-                    Self::Development
+                    Self::Production
                 }
             },
-            Err(_) => Self::Development,
+            Err(_) => Self::Production,
         }
     }
 
@@ -83,7 +83,7 @@ impl AppMode {
 
 impl Default for AppMode {
     fn default() -> Self {
-        Self::Development
+        Self::Production
     }
 }
 
@@ -114,8 +114,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_is_development() {
-        assert_eq!(AppMode::default(), AppMode::Development);
+    fn default_is_production() {
+        assert_eq!(AppMode::default(), AppMode::Production);
     }
 
     #[test]
