@@ -24,9 +24,9 @@ impl AppMode {
     /// `mode_env_var` (e.g. `APP_MODE`), falling back to Development when both are missing or
     /// invalid. When `override_mode` or the env var value is invalid, a warning is printed and it
     /// falls back to Development.
-    pub fn get(override_mode: Option<&str>, mode_env_var: &str) -> Self {
+    pub fn get(override_mode: Option<String>, mode_env_var: &str) -> Self {
         if let Some(s) = override_mode {
-            match Self::from_str(s) {
+            match Self::from_str(&s) {
                 Ok(mode) => return mode,
                 Err(_) => {
                     eprintln!(

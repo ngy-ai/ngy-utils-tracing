@@ -48,11 +48,11 @@ pub struct InitResult {
 /// let result = init(None, Vec::new(), None, None).expect("Failed to initialize");
 ///
 /// // Force a specific mode with a custom log file prefix
-/// let result = init(Some("production"), Vec::new(), Some("myapp.log".to_string()), None).expect("Failed to initialize");
+/// let result = init(Some("production".to_string()), Vec::new(), Some("myapp.log".to_string()), None).expect("Failed to initialize");
 /// tracing::info!("Application started in {} mode", result.mode);
 /// ```
 pub fn init(
-    mode_override: Option<&str>,
+    mode_override: Option<String>,
     crates: Vec<String>,
     log_prefix_name: Option<String>,
     mode_env_var: Option<String>,

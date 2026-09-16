@@ -8,7 +8,7 @@ use ngy_utils_tracing::{AppMode, get_current_mode, init};
 #[test]
 fn test_full_init_test_mode() {
     // Specify test mode via mode_override to avoid modifying process env vars (unsafe)
-    let result = init(Some("test"), Vec::new(), None, None).expect("init should succeed");
+    let result = init(Some("test".to_string()), Vec::new(), None, None).expect("init should succeed");
 
     assert_eq!(result.mode, AppMode::Test);
     // Test mode writes files simultaneously and should return a guard
