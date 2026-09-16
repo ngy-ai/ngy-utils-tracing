@@ -74,6 +74,8 @@ fn main() -> anyhow::Result<()> {
 
 Defaults to `Production`. When `APP_MODE` or the override value is invalid, a warning is printed and it falls back to `Production`.
 
+Resolution order: `InitOptions::mode_override` → the mode environment variable → `Production`. `.env` is loaded **before** the mode is resolved, so an `APP_MODE` defined there is honoured; since it is loaded with `dotenv_override()`, a value in `.env` takes precedence over the process environment.
+
 ## Public API
 
 | Function / Type                  | Description                                                  |

@@ -55,7 +55,8 @@ pub struct InitResult {
 pub struct InitOptions {
     /// Optional application mode override. An invalid value triggers a warning and
     /// falls back to Production. If `None`, the mode is read from `mode_env_var`
-    /// (default `APP_MODE`).
+    /// (default `APP_MODE`) **after `.env` has been loaded**, so a value defined in `.env` is
+    /// honoured.
     pub mode_override: Option<String>,
     /// List of project crate names that should use the `debug` level in console logging.
     pub crates: Vec<String>,
@@ -147,6 +148,11 @@ impl InitOptions {
 /// falls back to its environment variable (or built-in default). See [`InitOptions`] for
 /// the list of supported fields and their env-var fallbacks.
 ///
+/// Mode precedence: [`InitOptions::mode_override`] when `Some`, otherwise the `mode_env_var`
+/// environment variable (default `APP_MODE`), otherwise `Production`. `.env` is loaded **before**
+/// the mode is resolved, so an `APP_MODE` defined in `.env` is honoured when no explicit override
+/// is given.
+///
 /// A background task that periodically enforces `max_log_files` is spawned for `Production` and
 /// `Test` modes; its handle is returned in [`InitResult::retention`]. The interval comes from
 /// [`InitOptions::retention_interval`] or the `LOG_RETENTION_INTERVAL_SECONDS` environment
@@ -180,23 +186,24 @@ pub fn init(options: InitOptions) -> anyhow::Result<InitResult> {
         anyhow::bail!("tracing already initialized; init() must be called only once per process");
     }
 
-    // Determine the mode first, used to decide whether to print loading info
+    // Load the .env file *before* resolving the mode: when no explicit override is given the mode
+    // is read from `mode_env_var`, and `.env` must already be applied for an `APP_MODE` defined
+    // there to be honoured. The result is kept so the loading message can be printed once the mode
+    // (which decides whether to stay quiet) is known.
+    let dotenv_result = dotenvy::dotenv_override();
+
+    // Mode precedence: explicit `mode_override` > `mode_env_var` (after `.env` is applied)
+    // > `Production` default.
     let mode = AppMode::get(
         options.mode_override,
         options.mode_env_var.as_deref().unwrap_or("APP_MODE"),
     );
 
-    // Load the .env file, or use environment variables if it does not exist
-    match dotenvy::dotenv_override() {
-        Ok(path) => {
-            if !mode.is_production() {
-                println!("[ENV] Loaded .env from: {}", path.display());
-            }
-        }
-        Err(_) => {
-            if !mode.is_production() {
-                println!("[ENV] No .env file found, using environment variables");
-            }
+    // Report how the environment was loaded; production stays quiet.
+    if !mode.is_production() {
+        match dotenv_result {
+            Ok(path) => println!("[ENV] Loaded .env from: {}", path.display()),
+            Err(_) => println!("[ENV] No .env file found, using environment variables"),
         }
     }
 

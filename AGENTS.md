@@ -100,3 +100,8 @@ Rules and pitfalls:
 
 `.env` is loaded via `dotenvy` with `dotenv_override()`, so it takes precedence over the process
 environment. `InitOptions` fields override the corresponding environment variables.
+
+`.env` is loaded **before** the application mode is resolved: the mode precedence is
+`InitOptions::mode_override` → mode env var (`APP_MODE` by default, `.env` included) → `Production`.
+Keep that order when touching `init()` — resolving the mode before loading `.env` would ignore an
+`APP_MODE` defined in the file.
