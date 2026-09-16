@@ -6,8 +6,7 @@
 
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
-    EnvFilter,
-    Layer,
+    EnvFilter, Layer,
     fmt::{self},
     layer::SubscriberExt,
 };
@@ -30,8 +29,8 @@ pub fn resolve_log_prefix() -> String {
 
 /// Build the EnvFilter, reading `RUST_LOG` first, otherwise using `info`
 pub fn build_file_filter(default_directive: &str) -> anyhow::Result<EnvFilter> {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_directive));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_directive));
     Ok(filter)
 }
 
@@ -53,7 +52,7 @@ where
         .with_target(true)
         .with_level(true)
         .with_ansi(false)
-        .with_timer(fmt::time::SystemTime::default())
+        .with_timer(fmt::time::SystemTime)
         .with_writer(non_blocking);
 
     Ok((layer, guard))

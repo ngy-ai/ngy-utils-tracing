@@ -7,13 +7,14 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Application run mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AppMode {
     /// Development mode: console logging, verbose output
     Development,
     /// Test mode: console + file logging
     Test,
     /// Production mode: file logging, JSON format
+    #[default]
     Production,
 }
 
@@ -45,10 +46,7 @@ impl AppMode {
                     // Note: at this point init() has not yet set up the tracing subscriber
                     // (see the call order in init::init). Using tracing::warn! would be silently
                     // dropped due to no subscriber. Use eprintln! to ensure the warning is visible.
-                    eprintln!(
-                        "Invalid APP_MODE value '{}', falling back to Production",
-                        s
-                    );
+                    eprintln!("Invalid APP_MODE value '{}', falling back to Production", s);
                     Self::Production
                 }
             },
@@ -78,12 +76,6 @@ impl AppMode {
     /// Whether this is production mode
     pub fn is_production(&self) -> bool {
         matches!(self, Self::Production)
-    }
-}
-
-impl Default for AppMode {
-    fn default() -> Self {
-        Self::Production
     }
 }
 
@@ -120,7 +112,10 @@ mod tests {
 
     #[test]
     fn from_str_development() {
-        assert_eq!(AppMode::from_str("development").unwrap(), AppMode::Development);
+        assert_eq!(
+            AppMode::from_str("development").unwrap(),
+            AppMode::Development
+        );
         assert_eq!(AppMode::from_str("dev").unwrap(), AppMode::Development);
     }
 
@@ -131,7 +126,10 @@ mod tests {
 
     #[test]
     fn from_str_production() {
-        assert_eq!(AppMode::from_str("production").unwrap(), AppMode::Production);
+        assert_eq!(
+            AppMode::from_str("production").unwrap(),
+            AppMode::Production
+        );
         assert_eq!(AppMode::from_str("prod").unwrap(), AppMode::Production);
     }
 
@@ -142,9 +140,18 @@ mod tests {
 
     #[test]
     fn as_str_roundtrip() {
-        assert_eq!(AppMode::from_str(AppMode::Development.as_str()).unwrap(), AppMode::Development);
-        assert_eq!(AppMode::from_str(AppMode::Test.as_str()).unwrap(), AppMode::Test);
-        assert_eq!(AppMode::from_str(AppMode::Production.as_str()).unwrap(), AppMode::Production);
+        assert_eq!(
+            AppMode::from_str(AppMode::Development.as_str()).unwrap(),
+            AppMode::Development
+        );
+        assert_eq!(
+            AppMode::from_str(AppMode::Test.as_str()).unwrap(),
+            AppMode::Test
+        );
+        assert_eq!(
+            AppMode::from_str(AppMode::Production.as_str()).unwrap(),
+            AppMode::Production
+        );
     }
 
     #[test]
