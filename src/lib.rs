@@ -21,8 +21,12 @@ mod test_tracing;
 
 pub use app_mode::AppMode;
 pub use console_tracing::{build_debug_filter, console_tracing};
-pub use file_tracing::{build_file_filter, file_tracing, resolve_log_dir};
-pub use init::{InitResult, get_current_mode, init};
+pub use file_tracing::{
+    DEFAULT_RETENTION_INTERVAL, LogRetentionHandle, build_file_filter, cleanup_old_logs,
+    file_tracing, resolve_log_dir, resolve_log_prefix, resolve_max_log_files,
+    resolve_retention_interval, start_log_retention,
+};
+pub use init::{InitOptions, InitResult, get_current_mode, init};
 pub use test_tracing::test_tracing;
 
 // Test-only: serialize all environment variable access across the lib test binary to avoid

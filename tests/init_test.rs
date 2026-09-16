@@ -3,7 +3,7 @@
 //! Tests the complete init() call flow.
 //! This file exists separately because the tracing subscriber can only be initialized once.
 
-use ngy_utils_tracing::{AppMode, get_current_mode, init};
+use ngy_utils_tracing::{AppMode, InitOptions, get_current_mode, init};
 use std::env;
 
 #[test]
@@ -16,7 +16,7 @@ fn test_full_init_development() {
         env::remove_var("RUST_LOG");
     }
 
-    let result = init(None, Vec::new(), None, None).expect("init should succeed");
+    let result = init(InitOptions::default()).expect("init should succeed");
 
     assert_eq!(result.mode, AppMode::Development);
     assert!(result.guard.is_none());

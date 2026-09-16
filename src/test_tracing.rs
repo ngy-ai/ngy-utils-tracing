@@ -10,7 +10,7 @@ use tracing_subscriber::{Layer, prelude::*};
 
 use crate::console_tracing::{build_console_layer, build_debug_filter};
 use crate::file_tracing::{
-    build_file_filter, build_file_layer, resolve_log_dir, resolve_log_prefix,
+    build_file_filter, build_file_layer, resolve_log_dir, resolve_log_prefix, resolve_max_log_files,
 };
 
 /// Initialize test mode logging: outputs to both console and file.
@@ -23,17 +23,22 @@ use crate::file_tracing::{
 /// The returned `WorkerGuard` must stay alive to ensure file logs are fully written.
 /// This function calls `try_init()` and can only be called once per process.
 ///
-/// `log_prefix` overrides the `LOG_PREFIX` environment variable when `Some`; otherwise the
-/// `LOG_PREFIX` env var (default `app.log`) is used as the file name prefix.
+/// `log_dir` overrides the `LOG_DIR` environment variable when `Some`; otherwise `LOG_DIR`
+/// (default `logs`) is used. `log_prefix` overrides the `LOG_PREFIX` env var when `Some`;
+/// otherwise `LOG_PREFIX` (default `app.log`) is used as the file name prefix. `max_log_files`
+/// overrides `LOG_MAX_FILES` when `Some`; otherwise the default `7` is used as the retention limit.
 pub fn test_tracing(
     crates: Vec<String>,
+    log_dir: Option<String>,
     log_prefix: Option<String>,
+    max_log_files: Option<usize>,
 ) -> anyhow::Result<WorkerGuard> {
-    let log_dir = resolve_log_dir();
+    let log_dir = log_dir.unwrap_or_else(resolve_log_dir);
     let log_prefix = log_prefix.unwrap_or_else(resolve_log_prefix);
+    let max_files = max_log_files.unwrap_or_else(resolve_max_log_files);
 
     // File layer: use build_file_filter to control the level
-    let (file_layer, guard) = build_file_layer(&log_dir, &log_prefix)?;
+    let (file_layer, guard) = build_file_layer(&log_dir, &log_prefix, max_files)?;
     let file_filter = build_file_filter("info")?;
 
     // Console layer: use build_debug_filter to control the level
