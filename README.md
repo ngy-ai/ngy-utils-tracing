@@ -22,7 +22,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-ngy-utils-tracing = "0.1"
+ngy-utils-tracing = "0.6"
 ```
 
 > Requires Rust 2024 edition (toolchain locked to `stable` via `rust-toolchain.toml`).
