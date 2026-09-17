@@ -3,11 +3,8 @@
 //! Selects the corresponding tracing configuration automatically based on AppMode.
 
 use crate::{
-    app_mode::AppMode,
-    console_tracing::console_tracing_with_offset,
-    file_tracing::{file_tracing_with_offset, start_log_retention},
-    retention::{LogRetentionHandle, resolve_retention_interval_or_default},
-    test_tracing::test_tracing_with_offset,
+    app_mode::AppMode, console_tracing::console_tracing_with_offset,
+    file_tracing::file_tracing_with_offset, test_tracing::test_tracing_with_offset,
 };
 use std::sync::OnceLock;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -15,17 +12,12 @@ use tracing_appender::non_blocking::WorkerGuard;
 /// Globally stores the current application mode
 static CURRENT_MODE: OnceLock<AppMode> = OnceLock::new();
 
-/// Initialization result, containing the handles that must stay alive
+/// Initialization result, containing the guard that must stay alive
 pub struct InitResult {
     /// Guard for file logging (valid in production and test modes)
     pub guard: Option<WorkerGuard>,
     /// Current application mode
     pub mode: AppMode,
-    /// Handle for the optional background log-retention task. Present in `Production` / `Test` when
-    /// a retention interval is resolved (see [`InitOptions::retention_interval`]), and `None`
-    /// otherwise. Keep `InitResult` alive for the process lifetime to keep the task running;
-    /// dropping it stops the background thread.
-    pub retention: Option<LogRetentionHandle>,
 }
 
 /// Configuration for [`init`].
@@ -53,13 +45,12 @@ pub struct InitResult {
 /// // Use all defaults: environment configuration is read from the `NGY_*` variables
 /// let options = InitOptions::new("NGY_");
 ///
-/// // Chainable builder for a production setup with explicit paths and retention
+/// // Chainable builder for a production setup with explicit paths and a retention limit
 /// let options = InitOptions::new("NGY_")
 ///     .mode_override(Some("production".to_string()))
 ///     .log_dir(Some("logs".to_string()))
 ///     .log_prefix(Some("myapp.log".to_string()))
-///     .max_log_files(Some(7))
-///     .retention_interval(Some(std::time::Duration::from_secs(3600)));
+///     .max_log_files(Some(7));
 /// ```
 pub struct InitOptions {
     /// **Required** prefix for every environment variable this crate reads, e.g. `"NGY_"` makes the
@@ -90,31 +81,28 @@ pub struct InitOptions {
     /// `LOG_PREFIX` environment variable; when `None`, `LOG_PREFIX` is read and its value falls
     /// back to [`crate::DEFAULT_LOG_PREFIX`]. Daily files are named `{prefix}.{YYYY-MM-DD}`.
     pub log_prefix: Option<String>,
-    /// Optional max number of retained log files (including the file created for the current day).
-    /// When `Some`, overrides `LOG_MAX_FILES`; when `None`, `LOG_MAX_FILES` is read and its value
-    /// falls back to [`crate::DEFAULT_MAX_LOG_FILES`]. Older files beyond this are deleted at init,
-    /// and a slot is reserved for the current day's file so the directory never holds more than
-    /// `max_log_files` files.
+    /// Optional max number of retained log files, including the file of the current day. When
+    /// `Some`, overrides `LOG_MAX_FILES`; when `None`, `LOG_MAX_FILES` is read and its value falls
+    /// back to [`crate::DEFAULT_MAX_LOG_FILES`]. Values below `1` are treated as `1`, so the file
+    /// being written is never removed. The directory is trimmed to this many files whenever the
+    /// writer rolls over to a new day — including the first record after a restart, which opens the
+    /// current day's file — rather than when `init` runs.
     pub max_log_files: Option<usize>,
     /// Optional mode env var name. When `Some`, that name is used **verbatim**, without the
     /// [`env_prefix`](InitOptions::env_prefix); when `None`, the mode is read from the prefixed
     /// `APP_MODE` variable.
     pub mode_env_var: Option<String>,
-    /// Optional background retention interval. When `Some`, `init` spawns a background task that
-    /// periodically enforces `max_log_files` (useful for long-running processes spanning many
-    /// daily rotations). When `None`, the `LOG_RETENTION_INTERVAL_SECONDS` environment variable is
-    /// read and interpreted as seconds; if it is unset or invalid,
-    /// [`crate::DEFAULT_RETENTION_INTERVAL`] is used, so periodic cleanup is **enabled by
-    /// default**. Set the variable to `0` to disable the background task explicitly. The task
-    /// applies to `Production` and `Test` modes (the ones that write files) and uses the same
-    /// `log_dir` / `log_prefix` / `max_log_files` resolution as file logging.
-    pub retention_interval: Option<std::time::Duration>,
     /// Optional UTC offset for log timestamps, written as `+08:00`, `-05:30`, `UTC` or `Z`. When
-    /// `Some`, overrides the `LOG_TIME_OFFSET` environment variable; when `None`, `LOG_TIME_OFFSET`
-    /// is read and its value falls back to [`crate::DEFAULT_TIME_OFFSET`]. Both the console and the
-    /// file layer print RFC 3339 with that offset, so a record reports the same wall-clock time in
-    /// the same format wherever it is written. An invalid value triggers a warning and is skipped,
-    /// so resolution continues with the environment variable.
+    /// `Some`, overrides the `LOG_TIME_OFFSET` environment variable; when `None`, the prefixed
+    /// `LOG_TIME_OFFSET` variable is read, and if that is unset as well the **machine's own time
+    /// zone** is used, so a program that configures nothing still reports local time.
+    /// [`crate::DEFAULT_TIME_OFFSET`] is only the last resort for a machine that cannot report a
+    /// zone. Both the console and the file layer print RFC 3339 with that offset, so a record reports
+    /// the same wall-clock time in the same format wherever it is written. The offset also decides
+    /// the date in the log file name (`{prefix}.{YYYY-MM-DD}`), so a record and the name of the file
+    /// holding it always agree. It is resolved once, at `init`, so a daylight-saving switch mid-run
+    /// does not move it. An invalid value triggers a warning and is skipped, so resolution continues
+    /// with the next source.
     pub time_offset: Option<String>,
 }
 
@@ -142,7 +130,6 @@ impl InitOptions {
             log_prefix: None,
             max_log_files: None,
             mode_env_var: None,
-            retention_interval: None,
             time_offset: None,
         }
     }
@@ -183,15 +170,6 @@ impl InitOptions {
         self
     }
 
-    /// Set the optional background retention interval. When `Some`, `init` starts a background task
-    /// that periodically trims old log files; when `None`, the environment variable / default
-    /// resolution applies (see [`InitOptions::retention_interval`]), which enables periodic cleanup
-    /// by default.
-    pub fn retention_interval(mut self, retention_interval: Option<std::time::Duration>) -> Self {
-        self.retention_interval = retention_interval;
-        self
-    }
-
     /// Set the optional UTC offset used for log timestamps (e.g. `+08:00`, `UTC`).
     pub fn time_offset(mut self, time_offset: Option<String>) -> Self {
         self.time_offset = time_offset;
@@ -215,9 +193,10 @@ impl InitOptions {
 /// loaded **before** the mode is resolved, so a prefixed `APP_MODE` defined in `.env` is honoured
 /// when no explicit override is given.
 ///
-/// A background task that periodically enforces `max_log_files` runs for `Production` and `Test`;
-/// see [`InitOptions::retention_interval`] and [`InitResult::retention`]. Keep `InitResult` alive
-/// for the process lifetime to keep both the file `guard` and the retention task running.
+/// In `Production` and `Test` mode the file writer also keeps the log directory bounded: it trims
+/// it to [`InitOptions::max_log_files`] files every time it rolls over to a new day (see
+/// [`InitOptions::time_offset`] for the date in the file name). Keep `InitResult` alive for the
+/// process lifetime so the file `guard` can flush what is still buffered.
 ///
 /// # Errors
 ///
@@ -233,17 +212,15 @@ impl InitOptions {
 ///
 /// ```no_run
 /// use ngy_utils_tracing::{InitOptions, init};
-/// use std::time::Duration;
 ///
 /// // Read the mode from the `NGY_APP_MODE` variable, keep all other defaults
 /// let result = init(InitOptions::new("NGY_")).expect("Failed to initialize");
 ///
-/// // Force a specific mode with explicit paths and a 1h background trim
+/// // Force a specific mode with explicit paths and a 14-file retention limit
 /// let options = InitOptions::new("NGY_")
 ///     .mode_override(Some("production".to_string()))
 ///     .log_prefix(Some("myapp.log".to_string()))
-///     .max_log_files(Some(14))
-///     .retention_interval(Some(Duration::from_secs(3600)));
+///     .max_log_files(Some(14));
 /// let result = init(options).expect("Failed to initialize");
 /// tracing::info!("Application started in {} mode", result.mode);
 /// ```
@@ -284,63 +261,32 @@ pub fn init(options: InitOptions) -> anyhow::Result<InitResult> {
         }
     }
 
-    // Clone the file-related options so they can be reused for the retention task below.
-    let log_dir_opt = options.log_dir.clone();
-    let log_prefix_opt = options.log_prefix.clone();
-    let max_files_opt = options.max_log_files;
-    // Explicit option wins; otherwise fall back to the prefixed LOG_RETENTION_INTERVAL_SECONDS env
-    // var (seconds). When that variable is unset/invalid, DEFAULT_RETENTION_INTERVAL is used so the
-    // periodic cleanup is enabled by default; an explicit `0` disables the background task.
-    let retention_interval = options
-        .retention_interval
-        .or_else(|| resolve_retention_interval_or_default(env_prefix));
-
     // Every layer shares one timestamp offset; the explicit option wins over the prefixed
     // LOG_TIME_OFFSET variable.
     let time_offset = options.time_offset.as_deref();
 
     let guard = match mode {
-        AppMode::Production => {
-            let g = file_tracing_with_offset(
-                env_prefix,
-                log_dir_opt.clone(),
-                log_prefix_opt.clone(),
-                max_files_opt,
-                time_offset,
-            )?;
-            Some(g)
-        }
+        // The file layers resolve the log settings themselves (explicit option first, environment
+        // second) and trim the directory to the retention limit when they roll over to a new day.
+        AppMode::Production => Some(file_tracing_with_offset(
+            env_prefix,
+            options.log_dir,
+            options.log_prefix,
+            options.max_log_files,
+            time_offset,
+        )?),
         AppMode::Development => {
             console_tracing_with_offset(env_prefix, options.crates, time_offset)?;
             None
         }
-        AppMode::Test => {
-            let g = test_tracing_with_offset(
-                env_prefix,
-                options.crates,
-                log_dir_opt.clone(),
-                log_prefix_opt.clone(),
-                max_files_opt,
-                time_offset,
-            )?;
-            Some(g)
-        }
-    };
-
-    // Start the background retention task only for file-producing modes when an interval is set.
-    let retention = if matches!(mode, AppMode::Production | AppMode::Test) {
-        match retention_interval {
-            Some(interval) => Some(start_log_retention(
-                env_prefix,
-                log_dir_opt,
-                log_prefix_opt,
-                max_files_opt,
-                interval,
-            )?),
-            None => None,
-        }
-    } else {
-        None
+        AppMode::Test => Some(test_tracing_with_offset(
+            env_prefix,
+            options.crates,
+            options.log_dir,
+            options.log_prefix,
+            options.max_log_files,
+            time_offset,
+        )?),
     };
 
     // Publish the mode only after every step succeeded: a failed init (e.g. the subscriber could
@@ -348,11 +294,7 @@ pub fn init(options: InitOptions) -> anyhow::Result<InitResult> {
     // rejected as "already initialized" while no subscriber was ever installed.
     CURRENT_MODE.set(mode).ok();
 
-    Ok(InitResult {
-        guard,
-        mode,
-        retention,
-    })
+    Ok(InitResult { guard, mode })
 }
 
 /// Get the current application mode
@@ -384,11 +326,9 @@ mod tests {
         let result = InitResult {
             guard: None,
             mode: AppMode::Development,
-            retention: None,
         };
         assert_eq!(result.mode, AppMode::Development);
         assert!(result.guard.is_none());
-        assert!(result.retention.is_none());
     }
 
     #[test]
@@ -397,7 +337,6 @@ mod tests {
         let result = InitResult {
             guard: None,
             mode: AppMode::Production,
-            retention: None,
         };
         assert_eq!(result.mode, AppMode::Production);
     }

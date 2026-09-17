@@ -128,9 +128,9 @@ where
 /// This function calls `try_init()` and can only be called once per process. `crates` lists the
 /// project crates that should log at `debug`; the only other environment input is the timestamp
 /// offset, read from the prefixed `LOG_TIME_OFFSET` variable (see
-/// [`InitOptions::env_prefix`](crate::InitOptions::env_prefix)) and defaulting to
-/// [`crate::DEFAULT_TIME_OFFSET`]. `RUST_LOG` stays unprefixed, because the whole Rust logging
-/// ecosystem shares it.
+/// [`InitOptions::env_prefix`](crate::InitOptions::env_prefix)) and otherwise taken from the
+/// machine's own time zone ([`crate::DEFAULT_TIME_OFFSET`] is the last resort). `RUST_LOG` stays
+/// unprefixed, because the whole Rust logging ecosystem shares it.
 pub fn console_tracing(env_prefix: &str, crates: Vec<String>) -> anyhow::Result<()> {
     console_tracing_with_offset(env_prefix, crates, None)
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ngy-utils-tracing"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 authors = ["Ngy <taoistwar@gmail.com>"]
 license = "MIT"
@@ -25,7 +25,9 @@ tracing-subscriber = { version = "0.3", features = [
 # Already in the graph via tracing-subscriber's default features, so this adds no build cost.
 tracing-log = "0.2"
 tracing-appender = "0.2"
-time = { version = "0.3", features = ["formatting", "macros"] }
+# `local-offset` is what lets the timestamps (and the log file names) follow the machine's time zone
+# when `LOG_TIME_OFFSET` is unset; on Unix it pulls in `libc` and `num_threads` for `localtime_r`.
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 dotenvy = "0.15"
 anyhow = "1.0.104"
 

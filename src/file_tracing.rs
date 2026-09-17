@@ -1,15 +1,16 @@
 //! File logging initialization: writes JSON-format logs to a specified directory.
 //!
-//! Log files rotate daily, with filename format `{prefix}.{date}`; on initialization the oldest
-//! files beyond the retention limit are deleted (the policy itself lives in [`crate::retention`]),
-//! leaving room for the file created for the current day, so the directory never holds more than
-//! `LOG_MAX_FILES` files. Every setting and its default is documented once in
-//! [`InitOptions`](crate::InitOptions); this module also resolves them from the environment.
+//! Log files rotate daily, with filename format `{prefix}.{YYYY-MM-DD}`; the date is the day the
+//! resolved offset is on, so it matches the RFC 3339 timestamps inside the file. Whenever the writer
+//! rolls over to a new day it trims the directory to `LOG_MAX_FILES` files (the policy lives in
+//! [`crate::retention`], the writer in [`crate::rolling_file`]). Every setting and its default is
+//! documented once in [`InitOptions`](crate::InitOptions); this module also resolves them from the
+//! environment.
 //!
 //! Timestamps are RFC 3339 with the offset resolved in [`crate::timestamp`], shared with the
 //! console layer so both report the same wall-clock time.
 
-use crate::retention::{LogRetentionHandle, cleanup_old_logs, spawn_retention_task};
+use crate::rolling_file::RollingFileWriter;
 use time::UtcOffset;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
@@ -25,7 +26,7 @@ pub const DEFAULT_LOG_DIR: &str = "logs";
 pub const DEFAULT_LOG_PREFIX: &str = "app.log";
 
 /// Default number of retained log files, used when `LOG_MAX_FILES` is unset; older files beyond
-/// this are deleted on init.
+/// this are deleted when the writer rolls over to a new day.
 pub const DEFAULT_MAX_LOG_FILES: usize = 7;
 
 /// Build the log directory path
@@ -59,49 +60,6 @@ pub fn resolve_max_log_files(env_prefix: &str) -> usize {
         .unwrap_or(DEFAULT_MAX_LOG_FILES)
 }
 
-/// Start a background task that periodically enforces the log-file retention limit.
-///
-/// Unlike the one-shot cleanup at initialization, this keeps the log directory bounded for
-/// processes that run across many daily rotations. The task itself is implemented in the
-/// `retention` module; this function only resolves the settings it needs.
-///
-/// - `env_prefix`: prefix used for the `LOG_DIR` / `LOG_PREFIX` / `LOG_MAX_FILES` lookups; see
-///   [`crate::InitOptions::env_prefix`].
-/// - `log_dir`: overrides the prefixed `LOG_DIR` when `Some`; otherwise [`DEFAULT_LOG_DIR`] is used.
-/// - `log_prefix`: overrides the prefixed `LOG_PREFIX` when `Some`; otherwise [`DEFAULT_LOG_PREFIX`]
-///   is used.
-/// - `max_log_files`: overrides the prefixed `LOG_MAX_FILES` when `Some`; otherwise
-///   [`DEFAULT_MAX_LOG_FILES`] is used. Values below `1` are treated as `1`, so the file currently
-///   being written is never removed.
-/// - `interval`: how often cleanup runs. Use [`crate::DEFAULT_RETENTION_INTERVAL`] for the default.
-///
-/// # Example
-///
-/// ```no_run
-/// use ngy_utils_tracing::{start_log_retention, DEFAULT_RETENTION_INTERVAL};
-///
-/// // Keep the handle alive (like the WorkerGuard) for the process lifetime.
-/// let _retention =
-///     start_log_retention("NGY_", None, None, None, DEFAULT_RETENTION_INTERVAL).unwrap();
-/// ```
-///
-/// # Errors
-///
-/// Returns an error if the worker thread cannot be spawned.
-pub fn start_log_retention(
-    env_prefix: &str,
-    log_dir: Option<String>,
-    log_prefix: Option<String>,
-    max_log_files: Option<usize>,
-    interval: std::time::Duration,
-) -> anyhow::Result<LogRetentionHandle> {
-    let log_dir = log_dir.unwrap_or_else(|| resolve_log_dir(env_prefix));
-    let log_prefix = log_prefix.unwrap_or_else(|| resolve_log_prefix(env_prefix));
-    let max_files = max_log_files.unwrap_or_else(|| resolve_max_log_files(env_prefix));
-
-    spawn_retention_task(log_dir, log_prefix, max_files, interval)
-}
-
 /// Build the `EnvFilter`, reading `RUST_LOG` first and otherwise falling back to
 /// `default_directive` (callers pass [`crate::DEFAULT_LOG_LEVEL`]).
 pub fn build_file_filter(default_directive: &str) -> anyhow::Result<EnvFilter> {
@@ -116,6 +74,9 @@ pub fn build_file_filter(default_directive: &str) -> anyhow::Result<EnvFilter> {
 /// (e.g. `2026-09-17T19:03:04.123456+08:00`), which stays sortable and unambiguous for log
 /// collectors. Level and target are included by default; ANSI is disabled because the output does
 /// not go to a terminal.
+///
+/// `time_offset` decides both the timestamps and the date in the file name, so a record and the
+/// name of the file holding it always agree.
 pub(crate) fn build_file_layer<S>(
     log_dir: &str,
     log_prefix: &str,
@@ -127,12 +88,14 @@ where
 {
     std::fs::create_dir_all(log_dir)?;
 
-    // Enforce retention before opening the new appender, leaving one free slot for the file
-    // created for the current day so the directory never holds more than `max_files` files.
-    cleanup_old_logs(log_dir, log_prefix, max_files.saturating_sub(1))?;
-
-    let file_appender = tracing_appender::rolling::daily(log_dir, log_prefix);
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    // The writer keeps the file of the current day and trims the directory to `max_files` whenever
+    // it rotates, so no separate retention step is needed here.
+    let (non_blocking, guard) = tracing_appender::non_blocking(RollingFileWriter::new(
+        log_dir,
+        log_prefix,
+        max_files,
+        time_offset,
+    ));
 
     let layer = fmt::layer()
         .json()
@@ -148,8 +111,9 @@ where
 /// The returned `tracing_appender::non_blocking::WorkerGuard` must stay alive,
 /// otherwise logs may be lost. The caller should keep it in the main function until the process exits.
 ///
-/// The timestamp offset comes from the prefixed `LOG_TIME_OFFSET` variable, defaulting to
-/// [`crate::DEFAULT_TIME_OFFSET`].
+/// The timestamp offset comes from the prefixed `LOG_TIME_OFFSET` variable and, when that is unset,
+/// from the machine's own time zone; [`crate::DEFAULT_TIME_OFFSET`] is the last resort for a machine
+/// that cannot report one.
 ///
 /// - `env_prefix`: prefix for every variable this function reads; see
 ///   [`InitOptions::env_prefix`](crate::InitOptions::env_prefix).
@@ -158,7 +122,12 @@ where
 /// - `log_prefix`: overrides the prefixed `LOG_PREFIX` variable when `Some`; otherwise
 ///   [`DEFAULT_LOG_PREFIX`] is used as the file name prefix.
 /// - `max_log_files`: overrides the prefixed `LOG_MAX_FILES` variable when `Some`;
-///   otherwise [`DEFAULT_MAX_LOG_FILES`] is used as the retention limit.
+///   otherwise [`DEFAULT_MAX_LOG_FILES`] is used as the retention limit. Values below `1` are
+///   treated as `1`, so the file being written is never removed.
+///
+/// The file name ends in the date of the resolved offset (`{prefix}.{YYYY-MM-DD}`, e.g.
+/// `app.log.2026-09-18`), and the directory is trimmed to `max_log_files` files whenever the writer
+/// rolls over to the next day.
 pub fn file_tracing(
     env_prefix: &str,
     log_dir: Option<String>,
@@ -200,7 +169,7 @@ mod tests {
     use super::*;
 
     // These tests read RUST_LOG / the prefixed LOG_* variables; they hold crate::TEST_ENV_MUTEX
-    // uniformly, serialized with the tests in the console_tracing and retention modules, to avoid
+    // uniformly, serialized with the tests in the console_tracing and timestamp modules, to avoid
     // concurrent read/write (unsafe) causing UB.
     fn lock_env() -> std::sync::MutexGuard<'static, ()> {
         crate::TEST_ENV_MUTEX.lock().unwrap()

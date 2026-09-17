@@ -5,7 +5,12 @@
 //! sub-second digits of one event may differ slightly between the terminal and the file.
 //!
 //! Offset precedence: [`InitOptions::time_offset`](crate::InitOptions::time_offset) → the
-//! `LOG_TIME_OFFSET` environment variable → [`crate::DEFAULT_TIME_OFFSET`].
+//! `LOG_TIME_OFFSET` environment variable → the **machine's own time zone** → the
+//! [`crate::DEFAULT_TIME_OFFSET`] safety net for a machine that cannot report one.
+//!
+//! The offset is resolved once, here, and shared by every layer: a process that runs across a
+//! daylight-saving switch keeps the offset it started with, and the date in the log file name
+//! (see [`crate::rolling_file`]) follows the same value.
 
 use time::{UtcOffset, format_description::well_known::Rfc3339};
 use tracing_subscriber::fmt::time::OffsetTime;
@@ -28,6 +33,9 @@ pub(crate) fn rfc3339_timer(time_offset: UtcOffset) -> OffsetTime<Rfc3339> {
 /// The same offset is used by every layer, so the console and the JSON file agree on the
 /// wall-clock time of a record.
 ///
+/// Nothing configured means "whatever the machine is set to": the OS time zone is read here, once,
+/// rather than per record, so the layers cannot disagree mid-run.
+///
 /// An unparsable value is reported on stderr and skipped so that the next source applies. This
 /// runs before the subscriber is installed, where `tracing` would drop a warning, so `eprintln!`
 /// is used instead — mirroring [`AppMode::get`](crate::AppMode::get).
@@ -45,9 +53,19 @@ pub(crate) fn resolve_time_offset(env_prefix: &str, override_value: Option<&str>
         return offset;
     }
 
-    // `DEFAULT_TIME_OFFSET` is a constant, so falling back to UTC is only a safety net for a
-    // future edit that makes it unparsable.
-    parse_offset(crate::DEFAULT_TIME_OFFSET).unwrap_or(UtcOffset::UTC)
+    match UtcOffset::current_local_offset() {
+        Ok(offset) => offset,
+        Err(err) => {
+            // Only reachable on a machine that cannot report its time zone: `DEFAULT_TIME_OFFSET`
+            // (UTC) applies. The `unwrap_or` is a safety net for a future edit that makes that
+            // constant unparsable.
+            eprintln!(
+                "Cannot determine the local UTC offset ({err}), falling back to {}",
+                crate::DEFAULT_TIME_OFFSET
+            );
+            parse_offset(crate::DEFAULT_TIME_OFFSET).unwrap_or(UtcOffset::UTC)
+        }
+    }
 }
 
 /// Parse an offset on the next source, warning when the value is unusable.
@@ -140,30 +158,50 @@ mod tests {
     }
 
     #[test]
-    fn resolve_time_offset_reads_the_prefixed_variable() {
+    fn resolve_time_offset_reads_the_prefixed_variable_only() {
         let _lock = crate::TEST_ENV_MUTEX.lock().unwrap();
         let name = crate::env_var_name(TEST_PREFIX, TIME_OFFSET_ENV);
         // SAFETY: modifying the process environment is unsafe in edition 2024; holding
         // crate::TEST_ENV_MUTEX serializes this with every other test that touches env vars.
-        unsafe { std::env::set_var(&name, "+05:30") };
+        unsafe {
+            std::env::set_var(&name, "+05:30");
+            // A decoy: another program is free to own the unprefixed name, so it must not reach us.
+            std::env::set_var(TIME_OFFSET_ENV, "+12:34");
+        }
 
         assert_eq!(resolve_time_offset(TEST_PREFIX, None), offset(5, 30));
 
-        // SAFETY: Same as above; restore the environment variable set by this test.
-        unsafe { std::env::remove_var(&name) };
+        // SAFETY: Same as above; restore the environment variables set by this test.
+        unsafe {
+            std::env::remove_var(&name);
+            std::env::remove_var(TIME_OFFSET_ENV);
+        }
     }
 
+    /// With nothing configured the offset follows the machine, not a hard-coded zone.
     #[test]
-    fn resolve_time_offset_ignores_the_unprefixed_variable() {
+    fn resolve_time_offset_defaults_to_the_machine_offset() {
         let _lock = crate::TEST_ENV_MUTEX.lock().unwrap();
-        // An unrelated program is free to set the unprefixed name; it must not reach us.
+        let name = crate::env_var_name(TEST_PREFIX, TIME_OFFSET_ENV);
         // SAFETY: modifying the process environment is unsafe in edition 2024; holding
         // crate::TEST_ENV_MUTEX serializes this with every other test that touches env vars.
-        unsafe { std::env::set_var(TIME_OFFSET_ENV, "+05:30") };
+        unsafe { std::env::remove_var(&name) };
 
-        assert_eq!(resolve_time_offset(TEST_PREFIX, None), offset(8, 0));
+        match UtcOffset::current_local_offset() {
+            Ok(local) => assert_eq!(
+                resolve_time_offset(TEST_PREFIX, None),
+                local,
+                "an unconfigured offset must follow the machine's time zone"
+            ),
+            // Only a machine that cannot report its zone reaches the constant, and the warning on
+            // stderr is part of the contract.
+            Err(_) => assert_eq!(
+                resolve_time_offset(TEST_PREFIX, None),
+                parse_offset(crate::DEFAULT_TIME_OFFSET).unwrap()
+            ),
+        }
 
-        // SAFETY: Same as above; restore the environment variable set by this test.
-        unsafe { std::env::remove_var(TIME_OFFSET_ENV) };
+        // SAFETY: Same as above; leave the environment as this test found it.
+        unsafe { std::env::remove_var(&name) };
     }
 }

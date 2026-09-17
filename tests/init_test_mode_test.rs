@@ -17,8 +17,6 @@ fn test_full_init_test_mode() {
     assert_eq!(result.mode, AppMode::Test);
     // Test mode writes files simultaneously and should return a guard
     assert!(result.guard.is_some());
-    // Periodic retention is enabled by default (1 hour unless overridden/disabled via env)
-    assert!(result.retention.is_some());
     // After init, the current mode can be obtained via get_current_mode
     assert_eq!(get_current_mode(), Some(AppMode::Test));
 

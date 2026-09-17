@@ -16,13 +16,14 @@ retention.
 
 | Path | Purpose |
 | --- | --- |
-| `src/lib.rs` | Crate root, public re-exports, crate-wide `DEFAULT_*` constants, test-only `TEST_ENV_MUTEX` |
+| `src/lib.rs` | Crate root, public re-exports, crate-wide `DEFAULT_*` constants, `warn`, test-only `TEST_ENV_MUTEX` |
 | `src/app_mode.rs` | `AppMode` enum and env resolution |
 | `src/console_tracing.rs` | Console layer / filters |
-| `src/file_tracing.rs` | File layer / writer, the file-log settings table, `start_log_retention` wiring |
-| `src/retention.rs` | `cleanup_old_logs`, the retention interval setting, the background task and its handle |
+| `src/file_tracing.rs` | File layer: resolves the file-log settings, builds the layer and its writer |
+| `src/rolling_file.rs` | The daily-rotating file writer: file names follow the timestamp offset, retention runs at rotation |
+| `src/retention.rs` | `cleanup_old_logs`: which files count as logs, how they are ordered, which of them are deleted |
 | `src/test_tracing.rs` | Console + file combination (both layers share one directive list) |
-| `src/timestamp.rs` | `LOG_TIME_OFFSET` parsing and the RFC 3339 timer shared by both layers |
+| `src/timestamp.rs` | `LOG_TIME_OFFSET` resolution (the machine's time zone by default) and the RFC 3339 timer shared by both layers |
 | `src/init.rs` | `init()`, `InitOptions`, `InitResult`, `get_current_mode()` |
 | `tests/` | Integration tests (see testing notes below) |
 
@@ -89,15 +90,18 @@ Rules and pitfalls:
   when it needs its own `init()`.
 - Tests that read or write environment variables in the **lib** test binary are serialized by
   `crate::TEST_ENV_MUTEX`; hold it for the whole test. Each integration test binary is a separate
-  process, so it uses a file-local mutex instead (`tests/tracing_test.rs`, `tests/retention_test.rs`).
+  process, so it uses a file-local mutex instead (`tests/tracing_test.rs`).
   Modifying env vars is `unsafe` in edition 2024 — keep it inside an `unsafe { ... }` block with a
   `SAFETY`-style comment.
-- Prefer `tests/*_test.rs` for behaviour the public API can express (`cleanup_old_logs`,
-  `start_log_retention`, the `*_filter` builders, …): those tests double as a consumer-side contract.
-  Keep a test inside the module only when it needs a crate-internal item (e.g. something
-  `pub(crate)`), which is why `src/retention.rs` keeps a single test.
-- `tests/init_test.rs` and `tests/init_env_retention_test.rs` rely on process env vars; keep them in
-  separate files so they never run concurrently with other env-modifying tests.
+- Prefer `tests/*_test.rs` for behaviour the public API can express (`cleanup_old_logs`, the
+  `*_filter` builders, …): those tests double as a consumer-side contract. Keep a test inside the
+  module only when it needs a crate-internal item (e.g. something `pub(crate)`), which is why the
+  rotation, file-naming and retention-at-rotation tests live in `src/rolling_file.rs`: they drive a
+  crate-private writer with a fixed clock instead of waiting for midnight.
+- `tests/init_test.rs` relies on process env vars; keep it in its own file so it never runs
+  concurrently with other env-modifying tests. `tests/init_production_test.rs` writes into the
+  default `logs/` directory (excluded from the package in `Cargo.toml`) and reads the newest file
+  back to check that its name repeats the date its timestamp shows.
 - `tests/docs_consistency_test.rs` fails when the README environment table drifts from the
   `DEFAULT_*` constants, when a variable is missing from the `InitOptions` docs, or when
   `AGENTS.md` grows a second copy of that table.

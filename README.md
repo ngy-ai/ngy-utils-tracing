@@ -5,8 +5,8 @@ A Rust logging initialization utility library built on [`tracing`](https://docs.
 ## Features
 
 - **Mode-driven**: Switch between `Development` / `Test` / `Production` modes via the prefixed `APP_MODE` environment variable (or code override), automatically selecting different logging configurations.
-- **Console logging (development)**: `pretty` format with file name, line number, thread ids/names and span close events; colors only when stdout is a terminal, RFC 3339 timestamps (offset configurable via the prefixed `LOG_TIME_OFFSET`, default `+08:00`).
-- **File logging (production)**: `JSON` format with daily rotation (`{prefix}.{date}`), convenient for collection and search.
+- **Console logging (development)**: `pretty` format with file name, line number, thread ids/names and span close events; colors only when stdout is a terminal, RFC 3339 timestamps (offset configurable via the prefixed `LOG_TIME_OFFSET`; left unset, the machine's own time zone is used).
+- **File logging (production)**: `JSON` format with daily rotation; files are named `{prefix}.{YYYY-MM-DD}` after the date in the resolved offset, so a file name and the timestamps inside it always agree. The directory is trimmed to `LOG_MAX_FILES` files whenever the writer rolls over to a new day.
 - **Test logging**: Outputs to both console (pretty) and file (JSON), balancing readability and persistence.
 - **Prefixed, collision-free configuration**: every variable is read as `env_prefix` + name, so with `InitOptions::new("NGY_")` the log directory comes from `NGY_LOG_DIR` and an unrelated program's `LOG_DIR` is never touched. `RUST_LOG` is the one exception and stays unprefixed, because the Rust logging ecosystem shares it. See [Environment Variables](#environment-variables). `.env` is auto-loaded via `dotenvy` and takes precedence over the process environment.
 
@@ -22,7 +22,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-ngy-utils-tracing = "0.6"
+ngy-utils-tracing = "0.7"
 ```
 
 > Requires Rust 2024 edition (toolchain locked to `stable` via `rust-toolchain.toml`).
@@ -76,20 +76,18 @@ Resolution order: `InitOptions::mode_override` → the mode environment variable
 
 | Function / Type                  | Description                                                  |
 | -------------------------------- | ------------------------------------------------------------ |
-| `init(options)`                  | Unified initialization of dotenv + tracing, selecting config by mode. Accepts an `InitOptions` struct; any `None` field falls back to its env var / default. Returns `InitResult` (with `guard`, `mode`, and `retention`). |
-| `InitOptions`                    | Configuration struct for `init`. Fields: `env_prefix` (**required**, see below), `mode_override`, `crates`, `log_dir`, `log_prefix`, `max_log_files`, `mode_env_var`, `retention_interval`, `time_offset` — each one overrides the matching environment variable, and the field docs document the default. Created with `InitOptions::new(prefix)` plus a chainable builder; there is no `Default`, so the prefix cannot be forgotten. |
+| `init(options)`                  | Unified initialization of dotenv + tracing, selecting config by mode. Accepts an `InitOptions` struct; any `None` field falls back to its env var / default. Returns `InitResult` (with `guard` and `mode`). |
+| `InitOptions`                    | Configuration struct for `init`. Fields: `env_prefix` (**required**, see below), `mode_override`, `crates`, `log_dir`, `log_prefix`, `max_log_files`, `mode_env_var`, `time_offset` — each one overrides the matching environment variable, and the field docs document the default. Created with `InitOptions::new(prefix)` plus a chainable builder; there is no `Default`, so the prefix cannot be forgotten. |
 | `get_current_mode()`             | Get the current application mode (requires `init()` first); returns `None` if not initialized. |
 | `AppMode`                        | Application mode enum, providing `as_str` / `is_development` etc. |
 | `console_tracing(env_prefix, crates)` | Initialize console logging only (pretty, RFC 3339 timestamps; colors only on a terminal). |
-| `file_tracing(env_prefix, log_dir, log_prefix, max_log_files)` | Initialize file logging only (JSON, RFC 3339 timestamps), returning a `WorkerGuard` that must stay alive. Args override the prefixed `LOG_DIR` / `LOG_PREFIX` / `LOG_MAX_FILES` when `Some`. |
+| `file_tracing(env_prefix, log_dir, log_prefix, max_log_files)` | Initialize file logging only (JSON, RFC 3339 timestamps), returning a `WorkerGuard` that must stay alive. Args override the prefixed `LOG_DIR` / `LOG_PREFIX` / `LOG_MAX_FILES` when `Some`. Files are named `{prefix}.{YYYY-MM-DD}` after the date in the resolved offset, and the directory is trimmed to `max_log_files` on every rollover. |
 | `test_tracing(env_prefix, crates, log_dir, log_prefix, max_log_files)` | Initialize both console and file logging with the same directive list, returning a `WorkerGuard`. |
 | `build_debug_filter(crates)`     | Build the console `EnvFilter`: project crates default to `debug`, others `info`, with `RUST_LOG` directives layered on top (they win for the targets they name). |
 | `build_file_filter(default)`     | Build the file `EnvFilter`, reading `RUST_LOG` first, otherwise using the default value. |
-| `cleanup_old_logs(log_dir, log_prefix, max_files)` | One-shot deletion of old log files, keeping the most recent `max_files`. Only matches `{prefix}` / `{prefix}.{YYYY-MM-DD}` files, ordered by the date in the name. |
-| `start_log_retention(env_prefix, log_dir, log_prefix, max_log_files, interval)` | Spawn a background thread that periodically calls `cleanup_old_logs` (default interval `DEFAULT_RETENTION_INTERVAL` = 1h). Returns a `LogRetentionHandle`; keep it alive (like the `WorkerGuard`) to keep the task running. |
-| `DEFAULT_LOG_LEVEL`, `DEFAULT_LOG_DIR`, `DEFAULT_LOG_PREFIX`, `DEFAULT_MAX_LOG_FILES`, `DEFAULT_RETENTION_INTERVAL`, `DEFAULT_TIME_OFFSET` | Built-in defaults used when the matching environment variable is unset; referenced by the `InitOptions` field docs. |
-| `LogRetentionHandle`             | Handle for a background retention task; dropping or calling `stop()` stops the worker thread. |
-| `resolve_log_dir(env_prefix)`    | Resolve the log directory (reads the prefixed `LOG_DIR`, falls back to `DEFAULT_LOG_DIR`). Also `resolve_log_prefix`, `resolve_max_log_files`, `resolve_retention_interval`. |
+| `cleanup_old_logs(log_dir, log_prefix, max_files)` | The retention policy: deletion of old log files, keeping the most recent `max_files`. Only matches `{prefix}` / `{prefix}.{YYYY-MM-DD}` files, ordered by the date in the name. The file layer calls it whenever it rolls over to a new day; call it directly to apply the same policy to your own files. |
+| `DEFAULT_LOG_LEVEL`, `DEFAULT_LOG_DIR`, `DEFAULT_LOG_PREFIX`, `DEFAULT_MAX_LOG_FILES`, `DEFAULT_TIME_OFFSET` | Built-in defaults used when the matching environment variable is unset; referenced by the `InitOptions` field docs. |
+| `resolve_log_dir(env_prefix)`    | Resolve the log directory (reads the prefixed `LOG_DIR`, falls back to `DEFAULT_LOG_DIR`). Also `resolve_log_prefix` and `resolve_max_log_files`. |
 
 ## Environment Variables
 
@@ -110,9 +108,8 @@ it.
 | `RUST_LOG`      | `info`        | Log level or per-target directives; layered on top of `crates` (see the notes below). Never prefixed. |
 | `{prefix}LOG_DIR` | `logs`      | File log directory.                               |
 | `{prefix}LOG_PREFIX` | `app.log` | File log filename prefix; daily files are `{prefix}.{YYYY-MM-DD}`. |
-| `{prefix}LOG_MAX_FILES` | `7`    | Max number of retained log files, including the current day's; older daily-rotated files are deleted at `init`. |
-| `{prefix}LOG_RETENTION_INTERVAL_SECONDS` | `3600` | Background retention interval in **seconds**; `0` disables the background task. |
-| `{prefix}LOG_TIME_OFFSET` | `+08:00` | UTC offset for log timestamps (e.g. `-05:30`, `UTC`); shared by the console and file layers. |
+| `{prefix}LOG_MAX_FILES` | `7`    | Max number of retained log files, including the current day's; the directory is trimmed to this many whenever the writer rolls over to a new day. |
+| `{prefix}LOG_TIME_OFFSET` | `UTC` | UTC offset for log timestamps (e.g. `+08:00`, `-05:30`, `Z`). Unset means the machine's own time zone; `UTC` is only used when the OS cannot report one. Shared by the console and file layers, and it also decides the date in the log file name. |
 
 ## Notes
 
@@ -120,9 +117,10 @@ it.
 - **One-time initialization**: The global tracing subscriber can only be set once; `init()` / `console_tracing()` / `test_tracing()` cannot be called repeatedly within a process, and they fail with a clear error if another library already installed a global subscriber.
 - **`log` interoperability**: `init()` installs a `log` compatibility layer so dependencies that log through `log` are captured. If the application already installed a `log` logger (e.g. `env_logger`), that layer is skipped with a warning on stderr instead of failing initialization; the tracing subscriber is still installed.
 - **`RUST_LOG` precedence**: `build_debug_filter` / `console_tracing` first turn `crates` into `my_crate=debug` directives plus an `info` fallback, then append the directives from `RUST_LOG` on top. `EnvFilter` lets the last directive for a target win, so `RUST_LOG=hyper=warn` only quiets `hyper` while the project crates stay at `debug`, `RUST_LOG=my_crate=trace` overrides a single crate, and a bare level such as `RUST_LOG=warn` replaces the global `info` default. `RUST_LOG` therefore no longer discards the `crates` directives as a whole, and in `Test` mode the file layer is given the same directive list so both outputs log the same records. No dependency is excluded by the library itself, so quiet a noisy one with a per-target directive such as `RUST_LOG=sqlx=warn`. `RUST_LOG` is the only variable that is never prefixed, because the whole Rust logging ecosystem shares it.
-- **Timestamps**: both layers print RFC 3339 with the offset from `LOG_TIME_OFFSET` / `InitOptions::time_offset` (`2026-09-17T19:03:04.123456+08:00`, or `...Z` for `UTC`), so the console and the JSON file can be read side by side. Each layer samples the clock while formatting, so the sub-second digits can differ slightly between the two for the same event.
+- **Timestamps**: both layers print RFC 3339 with the offset from `InitOptions::time_offset` / `LOG_TIME_OFFSET` (`2026-09-17T19:03:04.123456+08:00`, or `...Z` for `UTC`), so the console and the JSON file can be read side by side. The offset is resolved once, at `init`: `InitOptions::time_offset` first, then the prefixed `LOG_TIME_OFFSET`, and otherwise the machine's own time zone — `DEFAULT_TIME_OFFSET` (`UTC`) only backs up an OS that cannot report one, and the resolved offset stays fixed for the life of the process, so a daylight-saving switch mid-run does not move it. Each layer samples the clock while formatting, so the sub-second digits can differ slightly between the two for the same event.
 - **Console colors**: enabled only when stdout is a terminal, so redirected output, pipes and CI stay free of escape codes; `NO_COLOR` is honoured.
-- **Log retention**: Retention only matches real rotated logs (`{prefix}` or `{prefix}.{YYYY-MM-DD}`), ordered by the date in the file name, so files like `app.logger` or `app.log.backup` are never deleted. `init()` trims once at startup, and in `Production` / `Test` a background task keeps trimming (see `LOG_RETENTION_INTERVAL_SECONDS`); its `LogRetentionHandle` is returned in `InitResult::retention` and must stay alive like the file `guard`. Alternatively call `start_log_retention(...)` directly and keep its handle alive.
+- **File names and rotation**: the file layer writes to `{prefix}.{YYYY-MM-DD}`, where the date is the day the resolved offset is on — the same offset as the timestamps inside the file, so a record and the name of the file holding it always agree (with the offset left unset, a record written at 01:00 local time is filed under the machine's local date, not the UTC one). The writer is a daily-rotating non-blocking appender, so no polling task or interval setting is involved: a record written after the date changes opens the new day's file and appends the previous one.
+- **Log retention**: retention only matches real log files (`{prefix}` or `{prefix}.{YYYY-MM-DD}`), ordered by the date in the file name, so files like `app.logger` or `app.log.backup` are never deleted. The directory is trimmed to `LOG_MAX_FILES` files every time the writer rolls over to a new day — including the first record after a restart, which opens the current day's file — so a long-running process stays bounded without any background task; `LOG_MAX_FILES` below `1` is treated as `1` so the file being written is never removed. The policy itself is the public `cleanup_old_logs`, which you can also call for your own files. Failures are reported through `tracing` once a subscriber is installed, so in `Production` mode the warning lands in the JSON log file rather than on stderr.
 
 ## Testing
 

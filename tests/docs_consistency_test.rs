@@ -7,20 +7,19 @@
 
 use ngy_utils_tracing::{
     AppMode, DEFAULT_LOG_DIR, DEFAULT_LOG_LEVEL, DEFAULT_LOG_PREFIX, DEFAULT_MAX_LOG_FILES,
-    DEFAULT_RETENTION_INTERVAL, DEFAULT_TIME_OFFSET,
+    DEFAULT_TIME_OFFSET,
 };
 
 /// Every environment variable the crate reads.
 ///
 /// These are the *suffixes* documented on `InitOptions`; at runtime each name is prefixed with the
 /// caller's `InitOptions::env_prefix`, except `RUST_LOG` (see [`documented_name`]).
-const SUPPORTED_VARS: [&str; 7] = [
+const SUPPORTED_VARS: [&str; 6] = [
     "APP_MODE",
     "RUST_LOG",
     "LOG_DIR",
     "LOG_PREFIX",
     "LOG_MAX_FILES",
-    "LOG_RETENTION_INTERVAL_SECONDS",
     "LOG_TIME_OFFSET",
 ];
 
@@ -89,10 +88,6 @@ fn readme_env_table_defaults_match_the_code_constants() {
         ("LOG_DIR", DEFAULT_LOG_DIR.to_string()),
         ("LOG_PREFIX", DEFAULT_LOG_PREFIX.to_string()),
         ("LOG_MAX_FILES", DEFAULT_MAX_LOG_FILES.to_string()),
-        (
-            "LOG_RETENTION_INTERVAL_SECONDS",
-            DEFAULT_RETENTION_INTERVAL.as_secs().to_string(),
-        ),
         ("LOG_TIME_OFFSET", DEFAULT_TIME_OFFSET.to_string()),
     ];
 
