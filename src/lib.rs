@@ -24,17 +24,20 @@ mod app_mode;
 mod console_tracing;
 mod file_tracing;
 mod init;
+mod retention;
 mod test_tracing;
 mod timestamp;
 
 pub use app_mode::AppMode;
 pub use console_tracing::{build_debug_filter, console_tracing};
 pub use file_tracing::{
-    DEFAULT_LOG_DIR, DEFAULT_LOG_PREFIX, DEFAULT_MAX_LOG_FILES, DEFAULT_RETENTION_INTERVAL,
-    LogRetentionHandle, build_file_filter, cleanup_old_logs, file_tracing, resolve_log_dir,
-    resolve_log_prefix, resolve_max_log_files, resolve_retention_interval, start_log_retention,
+    DEFAULT_LOG_DIR, DEFAULT_LOG_PREFIX, DEFAULT_MAX_LOG_FILES, build_file_filter, file_tracing,
+    resolve_log_dir, resolve_log_prefix, resolve_max_log_files, start_log_retention,
 };
 pub use init::{InitOptions, InitResult, get_current_mode, init};
+pub use retention::{
+    DEFAULT_RETENTION_INTERVAL, LogRetentionHandle, cleanup_old_logs, resolve_retention_interval,
+};
 pub use test_tracing::test_tracing;
 
 /// Build an environment variable name for `env_prefix`: `("NGY_", "LOG_DIR")` → `"NGY_LOG_DIR"`.
@@ -95,6 +98,7 @@ pub const DEFAULT_LOG_LEVEL: &str = "info";
 pub const DEFAULT_TIME_OFFSET: &str = "+08:00";
 
 // Test-only: serialize all environment variable access across the lib test binary to avoid
-// data races (unsafe) causing UB. Tests in both console_tracing and file_tracing modules use it.
+// data races (unsafe) causing UB. The console_tracing, file_tracing, retention and timestamp test
+// modules all use it.
 #[cfg(test)]
 pub(crate) static TEST_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -5,10 +5,8 @@
 use crate::{
     app_mode::AppMode,
     console_tracing::console_tracing_with_offset,
-    file_tracing::{
-        LogRetentionHandle, file_tracing_with_offset, resolve_retention_interval_or_default,
-        start_log_retention,
-    },
+    file_tracing::{file_tracing_with_offset, start_log_retention},
+    retention::{LogRetentionHandle, resolve_retention_interval_or_default},
     test_tracing::test_tracing_with_offset,
 };
 use std::sync::OnceLock;

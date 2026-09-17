@@ -19,7 +19,8 @@ retention.
 | `src/lib.rs` | Crate root, public re-exports, crate-wide `DEFAULT_*` constants, test-only `TEST_ENV_MUTEX` |
 | `src/app_mode.rs` | `AppMode` enum and env resolution |
 | `src/console_tracing.rs` | Console layer / filters |
-| `src/file_tracing.rs` | File layer, `cleanup_old_logs`, `start_log_retention`, env resolvers |
+| `src/file_tracing.rs` | File layer / writer, the file-log settings table, `start_log_retention` wiring |
+| `src/retention.rs` | `cleanup_old_logs`, the retention interval setting, the background task and its handle |
 | `src/test_tracing.rs` | Console + file combination (both layers share one directive list) |
 | `src/timestamp.rs` | `LOG_TIME_OFFSET` parsing and the RFC 3339 timer shared by both layers |
 | `src/init.rs` | `init()`, `InitOptions`, `InitResult`, `get_current_mode()` |
@@ -86,9 +87,15 @@ Rules and pitfalls:
 - The global tracing subscriber can be set only once per process, so every `init()` scenario lives
   in its own integration test file (`tests/init_*.rs`). Add a new file rather than a new `#[test]`
   when it needs its own `init()`.
-- Tests that read or write environment variables are serialized by `crate::TEST_ENV_MUTEX`; hold it
-  for the whole test. Modifying env vars is `unsafe` in edition 2024 — keep it inside an
-  `unsafe { ... }` block with a `SAFETY`-style comment.
+- Tests that read or write environment variables in the **lib** test binary are serialized by
+  `crate::TEST_ENV_MUTEX`; hold it for the whole test. Each integration test binary is a separate
+  process, so it uses a file-local mutex instead (`tests/tracing_test.rs`, `tests/retention_test.rs`).
+  Modifying env vars is `unsafe` in edition 2024 — keep it inside an `unsafe { ... }` block with a
+  `SAFETY`-style comment.
+- Prefer `tests/*_test.rs` for behaviour the public API can express (`cleanup_old_logs`,
+  `start_log_retention`, the `*_filter` builders, …): those tests double as a consumer-side contract.
+  Keep a test inside the module only when it needs a crate-internal item (e.g. something
+  `pub(crate)`), which is why `src/retention.rs` keeps a single test.
 - `tests/init_test.rs` and `tests/init_env_retention_test.rs` rely on process env vars; keep them in
   separate files so they never run concurrently with other env-modifying tests.
 - `tests/docs_consistency_test.rs` fails when the README environment table drifts from the
