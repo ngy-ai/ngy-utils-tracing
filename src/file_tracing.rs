@@ -1,14 +1,16 @@
 //! File logging initialization: writes JSON-format logs to a specified directory.
 //!
-//! Log files rotate daily, with filename format `{prefix}.{date}`.
-//! The log directory is controlled via the `LOG_DIR` environment variable (default `logs`).
-//! The log file prefix is controlled via the `LOG_PREFIX` environment variable (default `app.log`).
-//! The number of log files retained is controlled via the `LOG_MAX_FILES` environment variable
-//! (default `7`); on initialization the oldest files beyond this limit are deleted, leaving room
-//! for the file created for the current day so the directory never holds more than `LOG_MAX_FILES`.
-//! The log level is controlled via the `RUST_LOG` environment variable (default `info`).
+//! Log files rotate daily, with filename format `{prefix}.{date}`; on initialization the oldest
+//! files beyond the retention limit are deleted, leaving room for the file created for the current
+//! day, so the directory never holds more than `LOG_MAX_FILES` files. Every setting and its default
+//! is documented once in [`InitOptions`](crate::InitOptions); the resolvers below implement exactly
+//! that mapping, and the defaults are exposed as the `DEFAULT_*` constants in this module.
+//!
+//! Timestamps are RFC 3339 with the offset resolved in [`crate::timestamp`], shared with the
+//! console layer so both report the same wall-clock time.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use time::UtcOffset;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
     EnvFilter, Layer,
@@ -16,50 +18,65 @@ use tracing_subscriber::{
     layer::SubscriberExt,
 };
 
-/// Default log directory
-const DEFAULT_LOG_DIR: &str = "logs";
+/// Default log directory, used when `LOG_DIR` is unset.
+pub const DEFAULT_LOG_DIR: &str = "logs";
 
-/// Default log file prefix
-const DEFAULT_LOG_PREFIX: &str = "app.log";
+/// Default log file prefix, used when `LOG_PREFIX` is unset.
+pub const DEFAULT_LOG_PREFIX: &str = "app.log";
 
-/// Default number of retained log files; older files beyond this are deleted on init.
-const DEFAULT_MAX_LOG_FILES: usize = 7;
+/// Default number of retained log files, used when `LOG_MAX_FILES` is unset; older files beyond
+/// this are deleted on init.
+pub const DEFAULT_MAX_LOG_FILES: usize = 7;
 
 /// Default interval at which the background retention task runs [`cleanup_old_logs`].
 pub const DEFAULT_RETENTION_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
 
+/// Suffix of the environment variable holding the background retention interval, in seconds.
+const RETENTION_INTERVAL_ENV: &str = "LOG_RETENTION_INTERVAL_SECONDS";
+
 /// Build the log directory path
-pub fn resolve_log_dir() -> String {
-    std::env::var("LOG_DIR").unwrap_or_else(|_| DEFAULT_LOG_DIR.to_string())
+///
+/// Reads the prefixed `LOG_DIR` variable (see [`crate::InitOptions::env_prefix`]), falling back to
+/// [`DEFAULT_LOG_DIR`] when it is unset.
+pub fn resolve_log_dir(env_prefix: &str) -> String {
+    let name = crate::env_var_name(env_prefix, "LOG_DIR");
+    std::env::var(name).unwrap_or_else(|_| DEFAULT_LOG_DIR.to_string())
 }
 
 /// Build the log file prefix
-pub fn resolve_log_prefix() -> String {
-    std::env::var("LOG_PREFIX").unwrap_or_else(|_| DEFAULT_LOG_PREFIX.to_string())
+///
+/// Reads the prefixed `LOG_PREFIX` variable, falling back to [`DEFAULT_LOG_PREFIX`] when it is
+/// unset.
+pub fn resolve_log_prefix(env_prefix: &str) -> String {
+    let name = crate::env_var_name(env_prefix, "LOG_PREFIX");
+    std::env::var(name).unwrap_or_else(|_| DEFAULT_LOG_PREFIX.to_string())
 }
 
 /// Resolve the maximum number of retained log files.
 ///
-/// Reads `LOG_MAX_FILES`; falls back to [`DEFAULT_MAX_LOG_FILES`] (7) when unset
-/// or when the value is not a positive integer.
-pub fn resolve_max_log_files() -> usize {
-    std::env::var("LOG_MAX_FILES")
+/// Reads the prefixed `LOG_MAX_FILES` variable; falls back to [`DEFAULT_MAX_LOG_FILES`] when it is
+/// unset or when the value is not a positive integer.
+pub fn resolve_max_log_files(env_prefix: &str) -> usize {
+    let name = crate::env_var_name(env_prefix, "LOG_MAX_FILES");
+    std::env::var(name)
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or(DEFAULT_MAX_LOG_FILES)
 }
 
-/// Resolve the background retention interval from the `LOG_RETENTION_INTERVAL_SECONDS` environment variable.
+/// Resolve the background retention interval from the prefixed `LOG_RETENTION_INTERVAL_SECONDS`
+/// variable.
 ///
 /// The value is interpreted as **seconds**. Returns `None` when unset or when the value is `0`
 /// (disabled), so callers fall back to running no background task unless an explicit interval is
-/// provided via [`InitOptions::retention_interval`].
+/// provided via [`crate::InitOptions::retention_interval`].
 ///
 /// Note: [`crate::init`] does not use this function directly; it uses
 /// [`resolve_retention_interval_or_default`] so that periodic retention is enabled by default.
-pub fn resolve_retention_interval() -> Option<std::time::Duration> {
-    std::env::var("LOG_RETENTION_INTERVAL_SECONDS")
+pub fn resolve_retention_interval(env_prefix: &str) -> Option<std::time::Duration> {
+    let name = crate::env_var_name(env_prefix, RETENTION_INTERVAL_ENV);
+    std::env::var(name)
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|&secs| secs > 0)
@@ -70,11 +87,14 @@ pub fn resolve_retention_interval() -> Option<std::time::Duration> {
 ///
 /// Unlike [`resolve_retention_interval`], this keeps periodic retention **enabled by default**:
 ///
-/// - `LOG_RETENTION_INTERVAL_SECONDS=0` → `None` (the background task is explicitly disabled)
+/// - the prefixed `LOG_RETENTION_INTERVAL_SECONDS` set to `0` → `None` (task explicitly disabled)
 /// - a positive value → that many seconds
-/// - unset or invalid → [`DEFAULT_RETENTION_INTERVAL`] (currently 1 hour)
-pub(crate) fn resolve_retention_interval_or_default() -> Option<std::time::Duration> {
-    match std::env::var("LOG_RETENTION_INTERVAL_SECONDS") {
+/// - unset or invalid → [`DEFAULT_RETENTION_INTERVAL`]
+pub(crate) fn resolve_retention_interval_or_default(
+    env_prefix: &str,
+) -> Option<std::time::Duration> {
+    let name = crate::env_var_name(env_prefix, RETENTION_INTERVAL_ENV);
+    match std::env::var(name) {
         Ok(value) => match value.trim().parse::<u64>() {
             Ok(0) => None,
             Ok(secs) => Some(std::time::Duration::from_secs(secs)),
@@ -215,11 +235,15 @@ impl Drop for LogRetentionHandle {
 /// between runs (waking early if the handle is dropped/stopped) and deletes files older than
 /// `max_log_files` each time.
 ///
-/// - `log_dir`: overrides `LOG_DIR` when `Some`; otherwise `LOG_DIR` (default `logs`) is used.
-/// - `log_prefix`: overrides `LOG_PREFIX` when `Some`; otherwise `LOG_PREFIX` (default `app.log`).
-/// - `max_log_files`: overrides `LOG_MAX_FILES` when `Some`; otherwise the default `7` is used.
-///   Values below `1` are treated as `1`, so the file currently being written is never removed.
-/// - `interval`: how often cleanup runs. Use [`DEFAULT_RETENTION_INTERVAL`] for the default (1h).
+/// - `env_prefix`: prefix used for the `LOG_DIR` / `LOG_PREFIX` / `LOG_MAX_FILES` lookups; see
+///   [`crate::InitOptions::env_prefix`].
+/// - `log_dir`: overrides the prefixed `LOG_DIR` when `Some`; otherwise [`DEFAULT_LOG_DIR`] is used.
+/// - `log_prefix`: overrides the prefixed `LOG_PREFIX` when `Some`; otherwise [`DEFAULT_LOG_PREFIX`]
+///   is used.
+/// - `max_log_files`: overrides the prefixed `LOG_MAX_FILES` when `Some`; otherwise
+///   [`DEFAULT_MAX_LOG_FILES`] is used. Values below `1` are treated as `1`, so the file currently
+///   being written is never removed.
+/// - `interval`: how often cleanup runs. Use [`DEFAULT_RETENTION_INTERVAL`] for the default.
 ///
 /// # Example
 ///
@@ -227,23 +251,27 @@ impl Drop for LogRetentionHandle {
 /// use ngy_utils_tracing::{start_log_retention, DEFAULT_RETENTION_INTERVAL};
 ///
 /// // Keep the handle alive (like the WorkerGuard) for the process lifetime.
-/// let _retention = start_log_retention(None, None, None, DEFAULT_RETENTION_INTERVAL).unwrap();
+/// let _retention =
+///     start_log_retention("NGY_", None, None, None, DEFAULT_RETENTION_INTERVAL).unwrap();
 /// ```
 ///
 /// # Errors
 ///
 /// Returns an error if the worker thread cannot be spawned.
 pub fn start_log_retention(
+    env_prefix: &str,
     log_dir: Option<String>,
     log_prefix: Option<String>,
     max_log_files: Option<usize>,
     interval: std::time::Duration,
 ) -> anyhow::Result<LogRetentionHandle> {
-    let log_dir = log_dir.unwrap_or_else(resolve_log_dir);
-    let log_prefix = log_prefix.unwrap_or_else(resolve_log_prefix);
+    let log_dir = log_dir.unwrap_or_else(|| resolve_log_dir(env_prefix));
+    let log_prefix = log_prefix.unwrap_or_else(|| resolve_log_prefix(env_prefix));
     // Unlike the startup path, the file for the current day already exists here, so keep at
     // least one file to avoid deleting the active log file.
-    let max_files = max_log_files.unwrap_or_else(resolve_max_log_files).max(1);
+    let max_files = max_log_files
+        .unwrap_or_else(|| resolve_max_log_files(env_prefix))
+        .max(1);
 
     let shutdown = std::sync::Arc::new(AtomicBool::new(false));
     let shutdown_clone = shutdown.clone();
@@ -274,18 +302,25 @@ pub fn start_log_retention(
     })
 }
 
-/// Build the EnvFilter, reading `RUST_LOG` first, otherwise using `info`
+/// Build the `EnvFilter`, reading `RUST_LOG` first and otherwise falling back to
+/// `default_directive` (callers pass [`crate::DEFAULT_LOG_LEVEL`]).
 pub fn build_file_filter(default_directive: &str) -> anyhow::Result<EnvFilter> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_directive));
     Ok(filter)
 }
 
-/// Build the file log layer (JSON format)
-pub fn build_file_layer<S>(
+/// Build the file log layer (JSON format) using the given timestamp offset
+///
+/// Timestamps are written as RFC 3339 with an explicit offset
+/// (e.g. `2026-09-17T19:03:04.123456+08:00`), which stays sortable and unambiguous for log
+/// collectors. Level and target are included by default; ANSI is disabled because the output does
+/// not go to a terminal.
+pub(crate) fn build_file_layer<S>(
     log_dir: &str,
     log_prefix: &str,
     max_files: usize,
+    time_offset: UtcOffset,
 ) -> anyhow::Result<(impl Layer<S>, WorkerGuard)>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
@@ -301,10 +336,8 @@ where
 
     let layer = fmt::layer()
         .json()
-        .with_target(true)
-        .with_level(true)
         .with_ansi(false)
-        .with_timer(fmt::time::SystemTime)
+        .with_timer(crate::timestamp::rfc3339_timer(time_offset))
         .with_writer(non_blocking);
 
     Ok((layer, guard))
@@ -315,28 +348,49 @@ where
 /// The returned `tracing_appender::non_blocking::WorkerGuard` must stay alive,
 /// otherwise logs may be lost. The caller should keep it in the main function until the process exits.
 ///
-/// - `log_dir`: overrides the `LOG_DIR` environment variable when `Some`; otherwise
-///   `LOG_DIR` (default `logs`) is used.
-/// - `log_prefix`: overrides the `LOG_PREFIX` environment variable when `Some`; otherwise
-///   `LOG_PREFIX` (default `app.log`) is used as the file name prefix.
-/// - `max_log_files`: overrides the `LOG_MAX_FILES` environment variable when `Some`;
-///   otherwise `LOG_MAX_FILES` (default `7`) is used as the retention limit.
+/// The timestamp offset comes from the prefixed `LOG_TIME_OFFSET` variable, defaulting to
+/// [`crate::DEFAULT_TIME_OFFSET`].
+///
+/// - `env_prefix`: prefix for every variable this function reads; see
+///   [`InitOptions::env_prefix`](crate::InitOptions::env_prefix).
+/// - `log_dir`: overrides the prefixed `LOG_DIR` variable when `Some`; otherwise
+///   [`DEFAULT_LOG_DIR`] is used.
+/// - `log_prefix`: overrides the prefixed `LOG_PREFIX` variable when `Some`; otherwise
+///   [`DEFAULT_LOG_PREFIX`] is used as the file name prefix.
+/// - `max_log_files`: overrides the prefixed `LOG_MAX_FILES` variable when `Some`;
+///   otherwise [`DEFAULT_MAX_LOG_FILES`] is used as the retention limit.
 pub fn file_tracing(
+    env_prefix: &str,
     log_dir: Option<String>,
     log_prefix: Option<String>,
     max_log_files: Option<usize>,
 ) -> anyhow::Result<WorkerGuard> {
-    let log_dir = log_dir.unwrap_or_else(resolve_log_dir);
-    let log_prefix = log_prefix.unwrap_or_else(resolve_log_prefix);
-    let max_files = max_log_files.unwrap_or_else(resolve_max_log_files);
-    let (fmt_layer, guard) = build_file_layer(&log_dir, &log_prefix, max_files)?;
-    let env_filter = build_file_filter("info")?;
+    file_tracing_with_offset(env_prefix, log_dir, log_prefix, max_log_files, None)
+}
 
-    let subscriber = tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(env_filter);
+/// [`file_tracing`] with an explicit timestamp offset override; used by [`crate::init`] so that
+/// [`InitOptions::time_offset`](crate::InitOptions::time_offset) reaches the layer.
+pub(crate) fn file_tracing_with_offset(
+    env_prefix: &str,
+    log_dir: Option<String>,
+    log_prefix: Option<String>,
+    max_log_files: Option<usize>,
+    time_offset: Option<&str>,
+) -> anyhow::Result<WorkerGuard> {
+    let log_dir = log_dir.unwrap_or_else(|| resolve_log_dir(env_prefix));
+    let log_prefix = log_prefix.unwrap_or_else(|| resolve_log_prefix(env_prefix));
+    let max_files = max_log_files.unwrap_or_else(|| resolve_max_log_files(env_prefix));
+    let time_offset = crate::timestamp::resolve_time_offset(env_prefix, time_offset);
 
-    tracing::subscriber::set_global_default(subscriber)?;
+    let (fmt_layer, guard) = build_file_layer(&log_dir, &log_prefix, max_files, time_offset)?;
+    let env_filter = build_file_filter(crate::DEFAULT_LOG_LEVEL)?;
+
+    // `crate::install_subscriber` also installs the `log` compatibility layer and syncs its max
+    // level, which plain `set_global_default` does not; without it every `log::info!` record from a
+    // dependency would be dropped in `Production` mode.
+    crate::install_subscriber(
+        tracing_subscriber::registry().with(fmt_layer.with_filter(env_filter)),
+    )?;
 
     Ok(guard)
 }
@@ -352,12 +406,12 @@ mod tests {
         crate::TEST_ENV_MUTEX.lock().unwrap()
     }
 
-    #[test]
-    fn resolve_log_dir_returns_default_when_env_not_set() {
-        let _lock = lock_env();
-        // Only verify the function does not panic, not depending on env var state
-        let dir = resolve_log_dir();
-        assert!(!dir.is_empty());
+    /// Prefix used by the tests so they never touch a variable name a real deployment could use.
+    const TEST_PREFIX: &str = "NGY_TEST_";
+
+    /// Name of a prefixed variable, e.g. `env_name("LOG_DIR")` → `NGY_TEST_LOG_DIR`.
+    fn env_name(suffix: &str) -> String {
+        crate::env_var_name(TEST_PREFIX, suffix)
     }
 
     #[test]
@@ -376,75 +430,130 @@ mod tests {
     }
 
     #[test]
-    fn resolve_log_dir_returns_string() {
+    fn resolve_log_dir_reads_the_prefixed_variable_only() {
         let _lock = lock_env();
-        let dir = resolve_log_dir();
-        // Whether or not the env var is set, a non-empty string should be returned
-        assert!(!dir.is_empty());
+        let name = env_name("LOG_DIR");
+        // SAFETY: unsafe in Rust 2024; runtime tests hold TEST_ENV_MUTEX for all env access.
+        unsafe { std::env::remove_var(&name) };
+        assert_eq!(resolve_log_dir(TEST_PREFIX), DEFAULT_LOG_DIR);
+
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "custom-logs") };
+        assert_eq!(resolve_log_dir(TEST_PREFIX), "custom-logs");
+
+        // Another program owning the unprefixed name must not influence us.
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var("LOG_DIR", "someone-elses-logs") };
+        assert_eq!(resolve_log_dir(TEST_PREFIX), "custom-logs");
+
+        // SAFETY: Same as above; restore the environment this test changed.
+        unsafe {
+            std::env::remove_var(&name);
+            std::env::remove_var("LOG_DIR");
+        }
     }
 
     #[test]
-    fn resolve_max_log_files_defaults_to_seven() {
+    fn resolve_log_prefix_reads_the_prefixed_variable() {
         let _lock = lock_env();
-        // Unsafe in Rust 2024: safe here because TEST_ENV_MUTEX serializes all env access.
-        unsafe { std::env::remove_var("LOG_MAX_FILES") };
-        assert_eq!(resolve_max_log_files(), 7);
+        let name = env_name("LOG_PREFIX");
+        // SAFETY: unsafe in Rust 2024; runtime tests hold TEST_ENV_MUTEX for all env access.
+        unsafe { std::env::remove_var(&name) };
+        assert_eq!(resolve_log_prefix(TEST_PREFIX), DEFAULT_LOG_PREFIX);
+
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "svc.log") };
+        assert_eq!(resolve_log_prefix(TEST_PREFIX), "svc.log");
+
+        // SAFETY: Same as above; restore the environment this test changed.
+        unsafe { std::env::remove_var(&name) };
+    }
+
+    #[test]
+    fn resolve_max_log_files_rejects_non_positive_values() {
+        let _lock = lock_env();
+        let name = env_name("LOG_MAX_FILES");
+        // SAFETY: unsafe in Rust 2024; runtime tests hold TEST_ENV_MUTEX for all env access.
+        unsafe { std::env::remove_var(&name) };
+        assert_eq!(resolve_max_log_files(TEST_PREFIX), DEFAULT_MAX_LOG_FILES);
+
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "3") };
+        assert_eq!(resolve_max_log_files(TEST_PREFIX), 3);
+
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "0") };
+        assert_eq!(resolve_max_log_files(TEST_PREFIX), DEFAULT_MAX_LOG_FILES);
+
+        // SAFETY: Same as above; restore the environment this test changed.
+        unsafe { std::env::remove_var(&name) };
     }
 
     #[test]
     fn resolve_retention_interval_defaults_to_none() {
         let _lock = lock_env();
-        // Unsafe in Rust 2024: safe here because TEST_ENV_MUTEX serializes all env access.
-        unsafe { std::env::remove_var("LOG_RETENTION_INTERVAL_SECONDS") };
-        assert_eq!(resolve_retention_interval(), None);
+        let name = env_name(RETENTION_INTERVAL_ENV);
+        // SAFETY: unsafe in Rust 2024; runtime tests hold TEST_ENV_MUTEX for all env access.
+        unsafe { std::env::remove_var(&name) };
+        assert_eq!(resolve_retention_interval(TEST_PREFIX), None);
     }
 
     #[test]
     fn resolve_retention_interval_parses_seconds() {
         let _lock = lock_env();
-        // Unsafe in Rust 2024: safe here because TEST_ENV_MUTEX serializes all env access.
-        unsafe { std::env::set_var("LOG_RETENTION_INTERVAL_SECONDS", "3600") };
+        let name = env_name(RETENTION_INTERVAL_ENV);
+        // SAFETY: unsafe in Rust 2024; runtime tests hold TEST_ENV_MUTEX for all env access.
+        unsafe { std::env::set_var(&name, "3600") };
         assert_eq!(
-            resolve_retention_interval(),
+            resolve_retention_interval(TEST_PREFIX),
             Some(std::time::Duration::from_secs(3600))
         );
+
         // Zero (and invalid) values are treated as disabled.
-        unsafe { std::env::set_var("LOG_RETENTION_INTERVAL_SECONDS", "0") };
-        assert_eq!(resolve_retention_interval(), None);
-        unsafe { std::env::remove_var("LOG_RETENTION_INTERVAL_SECONDS") };
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "0") };
+        assert_eq!(resolve_retention_interval(TEST_PREFIX), None);
+
+        // SAFETY: Same as above; restore the environment this test changed.
+        unsafe { std::env::remove_var(&name) };
     }
 
     #[test]
     fn resolve_retention_interval_or_default_is_enabled_by_default() {
         let _lock = lock_env();
-        // Unsafe in Rust 2024: safe here because TEST_ENV_MUTEX serializes all env access.
+        let name = env_name(RETENTION_INTERVAL_ENV);
 
         // Unset -> default interval (periodic retention on by default).
-        unsafe { std::env::remove_var("LOG_RETENTION_INTERVAL_SECONDS") };
+        // SAFETY: unsafe in Rust 2024; runtime tests hold TEST_ENV_MUTEX for all env access.
+        unsafe { std::env::remove_var(&name) };
         assert_eq!(
-            resolve_retention_interval_or_default(),
+            resolve_retention_interval_or_default(TEST_PREFIX),
             Some(DEFAULT_RETENTION_INTERVAL)
         );
 
         // Invalid -> default interval as well.
-        unsafe { std::env::set_var("LOG_RETENTION_INTERVAL_SECONDS", "not-a-number") };
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "not-a-number") };
         assert_eq!(
-            resolve_retention_interval_or_default(),
+            resolve_retention_interval_or_default(TEST_PREFIX),
             Some(DEFAULT_RETENTION_INTERVAL)
         );
 
         // Positive value -> used as-is.
-        unsafe { std::env::set_var("LOG_RETENTION_INTERVAL_SECONDS", "120") };
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "120") };
         assert_eq!(
-            resolve_retention_interval_or_default(),
+            resolve_retention_interval_or_default(TEST_PREFIX),
             Some(std::time::Duration::from_secs(120))
         );
 
         // Explicit zero -> disabled.
-        unsafe { std::env::set_var("LOG_RETENTION_INTERVAL_SECONDS", "0") };
-        assert_eq!(resolve_retention_interval_or_default(), None);
+        // SAFETY: Same as above.
+        unsafe { std::env::set_var(&name, "0") };
+        assert_eq!(resolve_retention_interval_or_default(TEST_PREFIX), None);
 
-        unsafe { std::env::remove_var("LOG_RETENTION_INTERVAL_SECONDS") };
+        // SAFETY: Same as above; restore the environment this test changed.
+        unsafe { std::env::remove_var(&name) };
     }
 
     #[test]
@@ -563,6 +672,7 @@ mod tests {
 
         // Run the background task with a very short interval so it triggers at least once.
         let handle = start_log_retention(
+            TEST_PREFIX,
             Some(dir.to_string_lossy().to_string()),
             Some(prefix.to_string()),
             Some(7),

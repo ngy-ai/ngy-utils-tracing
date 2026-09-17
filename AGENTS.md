@@ -16,11 +16,12 @@ retention.
 
 | Path | Purpose |
 | --- | --- |
-| `src/lib.rs` | Crate root, public re-exports, test-only `TEST_ENV_MUTEX` |
+| `src/lib.rs` | Crate root, public re-exports, crate-wide `DEFAULT_*` constants, test-only `TEST_ENV_MUTEX` |
 | `src/app_mode.rs` | `AppMode` enum and env resolution |
 | `src/console_tracing.rs` | Console layer / filters |
 | `src/file_tracing.rs` | File layer, `cleanup_old_logs`, `start_log_retention`, env resolvers |
-| `src/test_tracing.rs` | Console + file combination |
+| `src/test_tracing.rs` | Console + file combination (both layers share one directive list) |
+| `src/timestamp.rs` | `LOG_TIME_OFFSET` parsing and the RFC 3339 timer shared by both layers |
 | `src/init.rs` | `init()`, `InitOptions`, `InitResult`, `get_current_mode()` |
 | `tests/` | Integration tests (see testing notes below) |
 
@@ -42,6 +43,10 @@ Run all three before committing. CI runs exactly these (plus `cargo publish`, se
   `ci:`, `docs:`) — `feat!:` / `BREAKING CHANGE` for incompatible API changes.
 - New public items must be re-exported from `src/lib.rs` and documented with a `///` doc comment.
 - Keep `README.md` in sync when behavior, environment variables or the public API change.
+- Install the tracing subscriber through `crate::install_subscriber`, **never**
+  `SubscriberInitExt::try_init`: the latter treats a pre-existing `log` logger (an application using
+  `env_logger`, say) as a fatal error, while we install our subscriber anyway and only skip the
+  `log` bridge, with a warning. An already installed *tracing* subscriber stays a hard error.
 
 ## Release process (IMPORTANT)
 
@@ -86,22 +91,40 @@ Rules and pitfalls:
   `unsafe { ... }` block with a `SAFETY`-style comment.
 - `tests/init_test.rs` and `tests/init_env_retention_test.rs` rely on process env vars; keep them in
   separate files so they never run concurrently with other env-modifying tests.
+- `tests/docs_consistency_test.rs` fails when the README environment table drifts from the
+  `DEFAULT_*` constants, when a variable is missing from the `InitOptions` docs, or when
+  `AGENTS.md` grows a second copy of that table.
+- Tests never touch an unprefixed variable name: they pass a test-only prefix (e.g. `NGY_TEST_`,
+  usually via a local `const ENV_PREFIX`) so they cannot read or clobber a name a real deployment
+  owns. Keep the "unprefixed decoy is ignored" assertions when adding env-driven tests.
 
 ## Environment variables
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `APP_MODE` | `production` | Log mode: `development` / `test` / `production` (`dev` / `prod` shorthand) |
-| `RUST_LOG` | `info` | Log level / per-target directives |
-| `LOG_DIR` | `logs` | File log directory |
-| `LOG_PREFIX` | `app.log` | File log name prefix (daily files are `{prefix}.{YYYY-MM-DD}`) |
-| `LOG_MAX_FILES` | `7` | Max retained log files, including the current day's file |
-| `LOG_RETENTION_INTERVAL_SECONDS` | `3600` | Background trim interval; `0` disables the background task |
+Do **not** keep a second copy of the variable table here. The authoritative description of every
+environment variable (name, default, matching `InitOptions` field, precedence) is the `InitOptions`
+field docs in `src/init.rs`; `README.md` keeps a short quick-reference table, and
+`tests/docs_consistency_test.rs` fails when that table drifts from the `DEFAULT_*` constants.
+
+When adding, removing or re-defaulting an environment variable, update in this order:
+
+1. the resolver and its `DEFAULT_*` constant (`src/file_tracing.rs`, `src/timestamp.rs`; crate-wide
+   constants such as `DEFAULT_LOG_LEVEL` live in `src/lib.rs`);
+2. the matching `InitOptions` field doc in `src/init.rs` — this is the authoritative copy;
+3. the quick-reference table in `README.md` **and** `SUPPORTED_VARS` in
+   `tests/docs_consistency_test.rs`; the test fails when either is missed.
 
 `.env` is loaded via `dotenvy` with `dotenv_override()`, so it takes precedence over the process
 environment. `InitOptions` fields override the corresponding environment variables.
 
+**Every variable is read with a prefix** (`InitOptions::env_prefix` + the documented name), because
+this is a public crate: `LOG_DIR` and `APP_MODE` are generic enough that an unrelated program may
+already own them. Build the name with `crate::env_var_name(env_prefix, "LOG_DIR")` — never
+`std::env::var("LOG_DIR")` — and keep `RUST_LOG` unprefixed, since the Rust logging ecosystem
+shares that name. `InitOptions::new` rejects an empty prefix, so the unprefixed names cannot come
+back by accident.
+
 `.env` is loaded **before** the application mode is resolved: the mode precedence is
-`InitOptions::mode_override` → mode env var (`APP_MODE` by default, `.env` included) → `Production`.
-Keep that order when touching `init()` — resolving the mode before loading `.env` would ignore an
-`APP_MODE` defined in the file.
+`InitOptions::mode_override` → mode env var (the prefixed `APP_MODE` by default, `.env` included) →
+`Production`. Keep that order when touching `init()` — resolving the mode before loading `.env`
+would ignore an `APP_MODE` defined in the file. An explicit `InitOptions::mode_env_var` is used
+verbatim, without the prefix.

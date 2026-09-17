@@ -5,10 +5,13 @@
 
 use ngy_utils_tracing::{AppMode, InitOptions, get_current_mode, init};
 
+/// Prefix for the environment variables the crate may read in this test.
+const ENV_PREFIX: &str = "NGY_TEST_";
+
 #[test]
 fn test_full_init_production() {
     // Specify production mode via mode_override to avoid modifying process env vars (unsafe)
-    let result = init(InitOptions::default().mode_override(Some("production".to_string())))
+    let result = init(InitOptions::new(ENV_PREFIX).mode_override(Some("production".to_string())))
         .expect("init should succeed");
 
     assert_eq!(result.mode, AppMode::Production);

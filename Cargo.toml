@@ -1,6 +1,6 @@
 [package]
 name = "ngy-utils-tracing"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 authors = ["Ngy <taoistwar@gmail.com>"]
 license = "MIT"
@@ -20,7 +20,15 @@ tracing-subscriber = { version = "0.3", features = [
   "json",
   "time",
 ] }
+# Used directly (instead of `SubscriberInitExt::try_init`) so that the `log` compatibility layer is
+# best effort: an application that already installed a `log` logger must not break `init()`.
+# Already in the graph via tracing-subscriber's default features, so this adds no build cost.
+tracing-log = "0.2"
 tracing-appender = "0.2"
 time = { version = "0.3", features = ["formatting", "macros"] }
 dotenvy = "0.15"
 anyhow = "1.0.104"
+
+[dev-dependencies]
+# Used by tests that install a `log` logger before calling `init()`.
+log = "0.4"
