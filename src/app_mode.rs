@@ -22,38 +22,40 @@ impl AppMode {
     /// Get the current application mode
     ///
     /// Resolution order: prefer `override_mode`, then read the environment variable named by
-    /// `mode_env_var` (e.g. `APP_MODE`), falling back to Production when both are missing or
-    /// invalid. When `override_mode` or the env var value is invalid, a warning is printed and it
-    /// falls back to Production.
+    /// `mode_env_var` (e.g. `APP_MODE`), and finally fall back to the default mode
+    /// (`Production`). An invalid `override_mode` is skipped with a warning so resolution
+    /// continues with the environment variable; an environment value that is missing or invalid
+    /// also falls back to the default mode.
     pub fn get(override_mode: Option<String>, mode_env_var: &str) -> Self {
-        if let Some(s) = override_mode {
-            match Self::from_str(&s) {
-                Ok(mode) => return mode,
-                Err(_) => {
-                    eprintln!(
-                        "Invalid override_mode value '{}', falling back to Production",
-                        s
-                    );
-                    return Self::Production;
-                }
-            }
+        if let Some(s) = override_mode
+            && let Some(mode) = Self::use_assign_mode(&s, "override_mode")
+        {
+            return mode;
         }
 
-        match env::var(mode_env_var) {
-            Ok(s) => match Self::from_str(&s) {
-                Ok(mode) => mode,
-                Err(_) => {
-                    // Note: at this point init() has not yet set up the tracing subscriber
-                    // (see the call order in init::init). Using tracing::warn! would be silently
-                    // dropped due to no subscriber. Use eprintln! to ensure the warning is visible.
-                    eprintln!(
-                        "Invalid {} value '{}', falling back to Production",
-                        mode_env_var, s
-                    );
-                    Self::Production
-                }
-            },
-            Err(_) => Self::Production,
+        if let Ok(s) = env::var(mode_env_var)
+            && let Some(mode) = Self::use_assign_mode(&s, mode_env_var)
+        {
+            return mode;
+        }
+
+        Self::default()
+    }
+
+    /// Try to use the assigned mode string.
+    ///
+    /// `source` identifies where the value came from (e.g. `"override_mode"`) and is included in
+    /// the warning message. Returns `None` when the value is invalid, so `get` can fall back to
+    /// the next source. Note: at this point `init()` has not yet set up the tracing subscriber
+    /// (see the call order in `init::init`). Using `tracing::warn!` would be silently dropped due
+    /// to no subscriber, so `eprintln!` is used to ensure the warning is visible.
+    fn use_assign_mode(s: &str, source: &str) -> Option<Self> {
+        match Self::from_str(s) {
+            Ok(mode) => Some(mode),
+            Err(_) => {
+                eprintln!("Invalid {} value '{}', falling back", source, s);
+                None
+            }
         }
     }
 
@@ -95,7 +97,7 @@ impl FromStr for AppMode {
         match s.to_lowercase().as_str() {
             "development" | "dev" => Ok(Self::Development),
             "test" => Ok(Self::Test),
-            "production" | "prod" => Ok(Self::Production),
+            "production" | "prod" | "real" => Ok(Self::Production),
             _ => Err(format!(
                 "Invalid app mode: '{}'. Valid values: development, test, production",
                 s
