@@ -253,11 +253,12 @@ pub fn init(options: InitOptions) -> anyhow::Result<InitResult> {
             .unwrap_or(&default_mode_env_var),
     );
 
-    // Report how the environment was loaded; production stays quiet.
+    // Report how the environment was loaded on stderr, never on stdout: stdout belongs to the
+    // program's own output (see `console_tracing::build_console_layer`). Production stays quiet.
     if !mode.is_production() {
         match dotenv_result {
-            Ok(path) => println!("[ENV] Loaded .env from: {}", path.display()),
-            Err(_) => println!("[ENV] No .env file found, using environment variables"),
+            Ok(path) => eprintln!("[ENV] Loaded .env from: {}", path.display()),
+            Err(_) => eprintln!("[ENV] No .env file found, using environment variables"),
         }
     }
 
