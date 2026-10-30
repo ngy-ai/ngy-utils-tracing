@@ -1,7 +1,8 @@
-//! Console logging initialization: pretty-format output with colors, file name, and line number.
+//! Console logging initialization: pretty-format output to stderr, with colors, file name, and
+//! line number.
 //!
 //! Timestamps are RFC 3339 with the offset resolved in [`crate::timestamp`]; colors are enabled
-//! only when stdout is a terminal. The log level is decided by the [`EnvFilter`] built in this
+//! only when stderr is a terminal. The log level is decided by the [`EnvFilter`] built in this
 //! module; see [`InitOptions`](crate::InitOptions) for the authoritative description of how
 //! `crates` and `RUST_LOG` interact.
 
@@ -96,6 +97,10 @@ fn sanitize_crate_name(crate_name: &str) -> Option<&str> {
 
 /// Build the console log layer (pretty format) using the given timestamp offset
 ///
+/// Records go to **stderr**, never to stdout: stdout stays reserved for the program's own output,
+/// so a CLI can be asserted on it in a contract test and a shell pipeline stays clean. Redirect
+/// `2>` to collect logs, `>` to collect data.
+///
 /// The layer formats and styles records but never filters them: whether a record is emitted is
 /// decided by the [`EnvFilter`] attached through [`Layer::with_filter`] (see
 /// [`build_debug_filter`]). That keeps the library free of assumptions about which dependency
@@ -105,7 +110,7 @@ fn sanitize_crate_name(crate_name: &str) -> Option<&str> {
 /// Timestamps are RFC 3339 with `time_offset`, using the same timer as the file layer so both
 /// outputs are directly comparable.
 ///
-/// Colors are enabled only when stdout is a terminal, so redirected output and CI stay clean and
+/// Colors are enabled only when stderr is a terminal, so redirected output and CI stay clean and
 /// `NO_COLOR` is honoured. Target and level are printed by default; file, line number, thread ids
 /// and thread names are enabled explicitly here.
 pub(crate) fn build_console_layer<S>(time_offset: UtcOffset) -> impl Layer<S>
@@ -114,7 +119,9 @@ where
 {
     tracing_subscriber::fmt::layer()
         .pretty()
-        .with_ansi(std::io::stdout().is_terminal())
+        // stderr, never stdout: stdout belongs to the caller's own output (see the doc comment).
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .with_file(true)
         .with_line_number(true)
         .with_timer(crate::timestamp::rfc3339_timer(time_offset))
@@ -123,7 +130,7 @@ where
         .with_span_events(FmtSpan::CLOSE)
 }
 
-/// Initialize console logging: pretty format output to stdout.
+/// Initialize console logging: pretty format output to stderr.
 ///
 /// This function calls `try_init()` and can only be called once per process. `crates` lists the
 /// project crates that should log at `debug`; the only other environment input is the timestamp

@@ -3,8 +3,9 @@
 //! A logging initialization utility library built on [`tracing`], which automatically selects the
 //! log output based on the "application mode" ([`AppMode`]):
 //!
-//! - `Development`: Console logging (pretty format, with file name, line number and thread ids)
-//! - `Test`: Console (pretty) + File (JSON)
+//! - `Development`: Console logging to stderr (pretty format, with file name, line number and
+//!   thread ids)
+//! - `Test`: Console to stderr (pretty) + File (JSON)
 //! - `Production`: File logging (JSON; one file per day, named after the date in the configured
 //!   offset, see [`InitOptions::time_offset`])
 //!

@@ -8,8 +8,8 @@ Guidance for AI agents and contributors working on this repository.
 log output (console / file / both) from an "application mode" and provides file log rotation with
 retention.
 
-- `Development` — console logging only (pretty format)
-- `Test` — console (pretty) + file (JSON)
+- `Development` — console logging only (pretty format, to stderr)
+- `Test` — console (pretty, to stderr) + file (JSON)
 - `Production` — file logging only (JSON, daily rotation)
 
 ## Repository layout
